@@ -29,7 +29,7 @@ flowchart LR
   OB[("OpenBao<br/>secrets/google")]
 
   PR --> LLM
-  LLM -->|"&lt;schedule&gt;"| P --> SCH --> LEG
+  LLM -->|schedule| P --> SCH --> LEG
   LEG -- illegal --> FB
   LEG -- legal --> CG --> CC -->|measured speedup| FB
   FB -->|next message| LLM
@@ -41,11 +41,11 @@ flowchart LR
 ```mermaid
 sequenceDiagram
   participant A as agent.py
-  participant L as LLM (Gemini)
+  participant L as Gemini LLM
   participant E as Environment
   A->>L: system prompt + loop nest + baseline time
   loop until stop-token or max iters
-    L-->>A: reasoning + &lt;schedule&gt;...&lt;/schedule&gt;
+    L-->>A: reasoning + schedule block
     A->>E: evaluate(schedule)
     E->>E: ISL legality + parallelism check
     alt legal
