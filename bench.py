@@ -28,6 +28,7 @@ MULTI = {
     "bicg": ["", "parallel(i)"],
     "gesummv": ["parallel(i)", "parallel(i)"],
     "gemver": ["parallel(i)", "parallel(i)", "parallel(i)", "parallel(i)"],
+    "covariance": ["parallel(j)", "parallel(i)", "tile2d(i,j,32,32)\nparallel(i_t)"],
 }
 
 

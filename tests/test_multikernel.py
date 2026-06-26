@@ -17,6 +17,7 @@ LEGAL = {
     "bicg": ["", "parallel(i)"],
     "gesummv": ["parallel(i)", "parallel(i)"],
     "gemver": ["parallel(i)", "parallel(i)", "parallel(i)", "parallel(i)"],
+    "covariance": ["parallel(j)", "parallel(i)", "tile2d(i,j,32,32)\nparallel(i_t)"],
 }
 # parallelizing a reduction loop must be rejected
 ILLEGAL = {
@@ -26,6 +27,7 @@ ILLEGAL = {
     "bicg": ["parallel(i)", ""],   # s0 reduces over i
     "gesummv": ["parallel(j)", ""],  # s0 reduces over j
     "gemver": ["", "parallel(j)", "", ""],  # s2 reduces over j
+    "covariance": ["", "", "parallel(k)"],  # s3 reduces over k
 }
 SPEEDS_UP = {"2mm", "3mm"}         # matmul kernels should beat 1x
 

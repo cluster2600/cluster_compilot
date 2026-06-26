@@ -249,5 +249,24 @@ def _gemver():
     return MultiKernel("gemver", {"N": S}, arrays, [s1, s2, s3, s4], "w")
 
 
+def _covariance():
+    """Datamining: mean (reduction) -> center data (in-place) -> covariance (triangular matmul)."""
+    from .multikernel import MStmt, MultiKernel
+    N, M = 600, 600                       # N samples, M features
+    arrays = {"data": ("N", "M"), "mean": ("M", 1), "cov": ("M", "M")}
+    s1 = MStmt([("j", "M"), ("i", "N")], "mean[j] += data[i*M+j]/(double)N;", "mean", reduction={"i"},
+               poly=PolyKernel("mean", ["j", "i"], "0<=j<M and 0<=i<N",
+                               [("mean", "j")], [("data", "i,j"), ("mean", "j")], ["N", "M"]))
+    s2 = MStmt([("i", "N"), ("j", "M")], "data[i*M+j] -= mean[j];", "data", reset="reinit",
+               poly=PolyKernel("data", ["i", "j"], "0<=i<N and 0<=j<M",
+                               [("data", "i,j")], [("data", "i,j"), ("mean", "j")], ["N", "M"]))
+    s3 = MStmt([("i", "M"), ("j", "i+1"), ("k", "N")], "cov[i*M+j] += data[k*M+i]*data[k*M+j];", "cov",
+               reduction={"k"},
+               poly=PolyKernel("cov", ["i", "j", "k"], "0<=i<M and 0<=j<=i and 0<=k<N",
+                               [("cov", "i,j")], [("data", "k,i"), ("data", "k,j"), ("cov", "i,j")], ["N", "M"]))
+    return MultiKernel("covariance", {"N": N, "M": M}, arrays, [s1, s2, s3], "cov")
+
+
 MULTI_REGISTRY = {"2mm": _twomm, "3mm": _3mm, "mvt": _mvt, "atax": _atax,
-                  "bicg": _bicg, "gesummv": _gesummv, "gemver": _gemver}
+                  "bicg": _bicg, "gesummv": _gesummv, "gemver": _gemver,
+                  "covariance": _covariance}
