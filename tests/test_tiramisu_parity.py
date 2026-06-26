@@ -50,3 +50,9 @@ if __name__ == "__main__":
     print(f"[{'OK ' if size else 'FAIL'}] Tiramisu Halide codegen -> "
           f"{size} bytes object" if size else f"[FAIL] codegen: {info[:200]}")
     assert size and size > 0, f"Tiramisu codegen failed: {info[:200]}"
+
+    # Tiramisu EXECUTES its generated code and measures speedup itself
+    sp, info = T.speedup(S.parse("tile2d(i, j, 32, 32)\nparallel(i1)"))
+    print(f"[{'OK ' if sp else 'FAIL'}] Tiramisu-measured speedup {sp:.2f}x ({info})"
+          if sp else f"[FAIL] speedup: {info[:200]}")
+    assert sp and sp > 0, f"Tiramisu execution failed: {info[:200]}"
