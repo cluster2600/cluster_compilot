@@ -1,0 +1,6 @@
+third_party/
+__pycache__/
+*.pyc
+*.o
+*.out
+build/

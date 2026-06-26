@@ -1,0 +1,2 @@
+islpy>=2026.1     # ISL polyhedral legality engine (same library Tiramisu wraps)
+certifi           # CA bundle for HTTPS on macOS python.org builds
