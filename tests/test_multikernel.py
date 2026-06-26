@@ -11,7 +11,7 @@ from compilot.multikernel import MultiEnvironment
 env = MultiEnvironment(MULTI_REGISTRY["2mm"]())
 
 CASES = [
-    ("identity", ["", ""], "success", True),
+    ("identity", ["", ""], "success", False),   # ~1.0x (same code as baseline; timing noise)
     ("both tiled+parallel",
      ["reorder(i,k,j)\ntile2d(i,j,64,64)\nparallel(i_t)",
       "reorder(i,l,j)\ntile2d(i,j,64,64)\nparallel(i_t)"], "success", True),
