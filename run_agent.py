@@ -7,8 +7,10 @@
 import argparse
 
 from compilot.backend_isl import environment
-from compilot.agent import run_dialogue, best_of_k
+from compilot.agent import run_dialogue, run_dialogue_multi, best_of_k
 from compilot.llm import GeminiClient, MockClient
+from compilot.kernels import MULTI_REGISTRY
+from compilot.multikernel import MultiEnvironment
 
 
 def main():
@@ -20,8 +22,19 @@ def main():
     ap.add_argument("--model", default="gemini-2.5-flash")
     args = ap.parse_args()
 
-    env = environment(args.kernel)
     make = (lambda: MockClient()) if args.mock else (lambda: GeminiClient(model=args.model))
+
+    if args.kernel in MULTI_REGISTRY:                       # multi-statement kernel
+        menv = MultiEnvironment(MULTI_REGISTRY[args.kernel]())
+        print(f"kernel={args.kernel} (multi-statement, {len(menv.mk.statements)} stmts)  "
+              f"baseline={menv.baseline()['time']:.4f}s  driver={'mock' if args.mock else args.model}\n")
+        sp, best = run_dialogue_multi(menv, make(), max_iters=args.iters)
+        print(f"\n=== BEST {sp:.2f}x ===")
+        for i, s in enumerate(best or []):
+            print(f"  [stmt {i}] {s.strip() or '(identity)'}")
+        return
+
+    env = environment(args.kernel)
     print(f"kernel={args.kernel}  baseline={env.baseline()['time']:.4f}s  "
           f"driver={'mock' if args.mock else args.model}  K={args.k} iters={args.iters}\n")
 

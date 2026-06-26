@@ -63,3 +63,17 @@ Baseline execution time (original, unoptimized): {t0:.4f} s.
 
 First, analyze the nest: identify each loop's role, data dependencies, and which
 loops can be parallelized or reordered. Then propose your first schedule."""
+
+
+def kernel_message_multi(menv):
+    from .multikernel import _Kernelish
+    n = len(menv.mk.statements)
+    parts = [f"This kernel has {n} statements, run in sequence (a later statement may read an "
+             f"earlier one's output buffer). Provide exactly {n} <schedule> blocks, one per "
+             f"statement, IN ORDER.\n"]
+    for idx, s in enumerate(menv.mk.statements):
+        nest = codegen.render_nest(_Kernelish(s.loops, s.body))
+        parts.append(f"Statement {idx} (writes `{s.output}`):\n{nest}\n")
+    parts.append(f"Baseline time (all statements): {menv.baseline()['time']:.4f} s.\n"
+                 f"Analyze each statement, then output {n} schedule blocks in order.")
+    return "\n".join(parts)

@@ -51,6 +51,42 @@ def run_dialogue(env, llm, max_iters=30, verbose=True):
     return best_sp, best_sched, trace
 
 
+def _multi_feedback(r, best):
+    s = r["status"]
+    if s == "success":
+        return (f"Legal. Combined speedup {r['speedup']:.2f}x ({r.get('detail','')}). "
+                f"Best so far {max(r['speedup'], best):.2f}x." + _feedback._CONTINUE)
+    if s in ("illegal", "parallel_illegal"):
+        return (f"Illegal schedule for statement writing `{r.get('stmt','?')}`: {s}. "
+                f"Fix that statement's schedule." + _feedback._CONTINUE)
+    return f"{s}: {r.get('detail','')}" + _feedback._CONTINUE
+
+
+def run_dialogue_multi(menv, llm, max_iters=30, verbose=True):
+    """Dialogue for a multi-statement kernel: one <schedule> block per statement."""
+    n = len(menv.mk.statements)
+    messages = [("user", _prompt.kernel_message_multi(menv))]
+    best_sp, best = 1.0, None
+    for it in range(max_iters):
+        resp = llm.chat(_prompt.SYSTEM, messages)
+        messages.append(("model", resp))
+        blocks = [b.strip() for b in _SCHED.findall(resp)]
+        if any(_prompt.STOP_TOKEN in b for b in blocks):
+            break
+        if not blocks:
+            messages.append(("user", f"Provide {n} <schedule> blocks." + _feedback._CONTINUE))
+            continue
+        scheds = (blocks[-n:] if len(blocks) >= n else blocks + [""] * (n - len(blocks)))
+        r = menv.evaluate(scheds)
+        if r["status"] == "success" and r["speedup"] > best_sp:
+            best_sp, best = r["speedup"], scheds
+        if verbose:
+            sp = f"{r['speedup']:.2f}x" if r.get("speedup") else "  -  "
+            print(f"  iter {it}: [{r['status']:16}] {sp:>7}  best={best_sp:.2f}x")
+        messages.append(("user", _multi_feedback(r, best_sp)))
+    return best_sp, best
+
+
 def best_of_k(env, make_llm, K=5, max_iters=30, verbose=True):
     """Run K independent dialogues; return the best plus per-run results."""
     runs = []
