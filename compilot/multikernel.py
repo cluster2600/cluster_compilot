@@ -48,24 +48,26 @@ def _emit_program(mk, scheds):
     for a, (d0, d1) in mk.arrays.items():
         if a in outputs:
             continue
-        inits.append(f"  for (int x=0;x<{d0};x++) for (int y=0;y<{d1};y++) "
-                     f"{a}[x*{d1}+y]=(double)(((x*7+y*13)%97))/97.0;")
+        inits.append(f"  for (int r_=0;r_<{d0};r_++) for (int c_=0;c_<{d1};c_++) "
+                     f"{a}[r_*{d1}+c_]=(double)(((r_*7+c_*13)%97))/97.0;")
     inits = "\n".join(inits)
 
     body_lines = []
     for s, sched in zip(mk.statements, scheds):
         od0, od1 = mk.arrays[s.output]
-        body_lines.append(f"    for (int x=0;x<{od0};x++) for (int y=0;y<{od1};y++) "
-                          f"{s.output}[x*{od1}+y]=0.0;")
+        body_lines.append(f"    for (int r_=0;r_<{od0};r_++) for (int c_=0;c_<{od1};c_++) "
+                          f"{s.output}[r_*{od1}+c_]=0.0;")
         # reuse the single-statement nest emitter
         fake = _Kernelish(s.loops, s.body)
         levels = _cg._build_levels(fake, _schedule.parse(sched) if sched.strip() else [])
         body_lines.append(_cg._emit_nest(fake, levels, indent="    "))
 
     nest = "\n".join(body_lines)
-    fd0, fd1 = mk.arrays[mk.final]
-    checksum = (f"  double sum=0; for (int x=0;x<{fd0};x++) for (int y=0;y<{fd1};y++) "
-                f"sum+={mk.final}[x*{fd1}+y];")
+    csum = ["  double sum=0;"]
+    for a in sorted(outputs):
+        d0, d1 = mk.arrays[a]
+        csum.append(f"  for (int r_=0;r_<{d0};r_++) for (int c_=0;c_<{d1};c_++) sum+={a}[r_*{d1}+c_];")
+    checksum = "\n".join(csum)
     frees = "\n".join(f"  free({a});" for a in mk.arrays)
     return f"""#include <stdio.h>
 #include <stdlib.h>

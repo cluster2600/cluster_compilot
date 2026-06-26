@@ -1,31 +1,42 @@
-"""Multi-statement EXECUTION on 2mm (tmp = A·B; D = tmp·C).
+"""Multi-statement EXECUTION on PolyBench kernels (2mm, 3mm, mvt, atax, bicg).
 
-Each matmul statement is scheduled independently; the final checksum guards
-correctness. Proves: independent scheduling speeds up the whole kernel, and
-the engine rejects parallelizing a reduction loop.
+Each statement is scheduled independently; the combined output checksum guards
+correctness. We assert: a legal per-statement schedule runs correctly (success),
+matmul kernels speed up, and parallelizing a reduction loop is rejected.
 Run: python3 -m tests.test_multikernel
 """
 from compilot.kernels import MULTI_REGISTRY
 from compilot.multikernel import MultiEnvironment
 
-env = MultiEnvironment(MULTI_REGISTRY["2mm"]())
-
-CASES = [
-    ("identity", ["", ""], "success", False),   # ~1.0x (same code as baseline; timing noise)
-    ("both tiled+parallel",
-     ["reorder(i,k,j)\ntile2d(i,j,64,64)\nparallel(i_t)",
-      "reorder(i,l,j)\ntile2d(i,j,64,64)\nparallel(i_t)"], "success", True),
-    ("S1 parallel(l) [reduction]", ["", "parallel(l)"], "parallel_illegal", False),
-]
+# a legal per-statement schedule per kernel (parallelize a non-reduction outer loop)
+LEGAL = {
+    "2mm":  ["parallel(i)", "parallel(i)"],
+    "3mm":  ["parallel(i)", "parallel(i)", "parallel(i)"],
+    "mvt":  ["parallel(i)", "parallel(i)"],
+    "atax": ["parallel(i)", ""],
+    "bicg": ["", "parallel(i)"],
+}
+# parallelizing a reduction loop must be rejected
+ILLEGAL = {
+    "2mm":  ["parallel(k)", ""],
+    "3mm":  ["parallel(k)", "", ""],
+    "atax": ["parallel(j)", ""],   # s0 reduces over j
+    "bicg": ["parallel(i)", ""],   # s0 reduces over i
+}
+SPEEDS_UP = {"2mm", "3mm"}         # matmul kernels should beat 1x
 
 if __name__ == "__main__":
-    print(f"2mm baseline: {env.baseline()['time']:.4f}s")
-    for name, scheds, want_status, want_speedup in CASES:
-        r = env.evaluate(scheds)
-        ok = r["status"] == want_status
-        sp = f"{r['speedup']:.2f}x" if r["speedup"] else "  -  "
-        print(f"[{'OK ' if ok else 'FAIL'}] {r['status']:16} {sp:>7}  {name}")
-        assert ok, f"{name}: {r['status']} != {want_status}"
-        if want_speedup:
-            assert r["speedup"] and r["speedup"] > 1.0, f"{name}: expected speedup"
-    print("\nMulti-statement execution (2mm) validated.")
+    for name, factory in MULTI_REGISTRY.items():
+        env = MultiEnvironment(factory())
+        r = env.evaluate(LEGAL[name])
+        sp = f"{r['speedup']:.2f}x" if r.get("speedup") else "  -  "
+        ok = r["status"] == "success"
+        print(f"[{'OK ' if ok else 'FAIL'}] {name:6} legal-schedule [{r['status']:10}] {sp}")
+        assert ok, f"{name}: {r['status']}"
+        if name in SPEEDS_UP:
+            assert r["speedup"] > 1.0, f"{name}: expected speedup, got {r['speedup']}"
+        if name in ILLEGAL:
+            ri = MultiEnvironment(factory()).evaluate(ILLEGAL[name])
+            print(f"        {name:6} parallel(reduction) -> [{ri['status']}]")
+            assert ri["status"] == "parallel_illegal", f"{name}: reduction not rejected ({ri['status']})"
+    print("\nMulti-statement execution validated on 5 PolyBench kernels.")

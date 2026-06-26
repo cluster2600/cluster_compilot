@@ -111,4 +111,63 @@ def _twomm():
                         "C": ("M", "L"), "D": ("N", "L")}, [s0, s1], final="D")
 
 
-MULTI_REGISTRY = {"2mm": _twomm}
+def _poly(name, order, dom, w, r):
+    return PolyKernel(name, order, dom, w, r, ["N"])
+
+
+def _3mm():
+    from .multikernel import MStmt, MultiKernel
+    S = 200
+    dom = "0<=i<N and 0<=j<N and 0<=k<N"
+    def mm(out, a, b):
+        return MStmt(loops=[("i", "N"), ("j", "N"), ("k", "N")],
+                     body=f"{out}[i*N+j] += {a}[i*N+k]*{b}[k*N+j];", output=out, reduction={"k"},
+                     poly=_poly(out, ["i", "j", "k"], dom,
+                                [(out, "i,j")], [(a, "i,k"), (b, "k,j"), (out, "i,j")]))
+    arrays = {x: ("N", "N") for x in ("A", "B", "C", "D", "E", "F", "G")}
+    return MultiKernel("3mm", {"N": S}, arrays,
+                       [mm("E", "A", "B"), mm("F", "C", "D"), mm("G", "E", "F")], final="G")
+
+
+def _matvec_kernel(name, S, arrays, stmts, final):
+    from .multikernel import MultiKernel
+    return MultiKernel(name, {"N": S}, arrays, stmts, final=final)
+
+
+def _mvt():
+    from .multikernel import MStmt
+    S = 2000
+    d = "0<=i<N and 0<=j<N"
+    arrays = {"A": ("N", "N"), "x1": ("N", 1), "x2": ("N", 1), "y1": ("N", 1), "y2": ("N", 1)}
+    s0 = MStmt([("i", "N"), ("j", "N")], "x1[i] += A[i*N+j]*y1[j];", "x1", reduction={"j"},
+               poly=_poly("x1", ["i", "j"], d, [("x1", "i")], [("A", "i,j"), ("y1", "j"), ("x1", "i")]))
+    s1 = MStmt([("i", "N"), ("j", "N")], "x2[i] += A[j*N+i]*y2[j];", "x2", reduction={"j"},
+               poly=_poly("x2", ["i", "j"], d, [("x2", "i")], [("A", "j,i"), ("y2", "j"), ("x2", "i")]))
+    return _matvec_kernel("mvt", S, arrays, [s0, s1], "x1")
+
+
+def _atax():
+    from .multikernel import MStmt
+    S = 2000
+    d = "0<=i<N and 0<=j<N"
+    arrays = {"A": ("N", "N"), "x": ("N", 1), "tmp": ("N", 1), "y": ("N", 1)}
+    s0 = MStmt([("i", "N"), ("j", "N")], "tmp[i] += A[i*N+j]*x[j];", "tmp", reduction={"j"},
+               poly=_poly("tmp", ["i", "j"], d, [("tmp", "i")], [("A", "i,j"), ("x", "j"), ("tmp", "i")]))
+    s1 = MStmt([("i", "N"), ("j", "N")], "y[j] += A[i*N+j]*tmp[i];", "y", reduction={"i"},
+               poly=_poly("y", ["i", "j"], d, [("y", "j")], [("A", "i,j"), ("tmp", "i"), ("y", "j")]))
+    return _matvec_kernel("atax", S, arrays, [s0, s1], "y")
+
+
+def _bicg():
+    from .multikernel import MStmt
+    S = 2000
+    d = "0<=i<N and 0<=j<N"
+    arrays = {"A": ("N", "N"), "r": ("N", 1), "p": ("N", 1), "sv": ("N", 1), "q": ("N", 1)}
+    s0 = MStmt([("i", "N"), ("j", "N")], "sv[j] += A[i*N+j]*r[i];", "sv", reduction={"i"},
+               poly=_poly("sv", ["i", "j"], d, [("sv", "j")], [("A", "i,j"), ("r", "i"), ("sv", "j")]))
+    s1 = MStmt([("i", "N"), ("j", "N")], "q[i] += A[i*N+j]*p[j];", "q", reduction={"j"},
+               poly=_poly("q", ["i", "j"], d, [("q", "i")], [("A", "i,j"), ("p", "j"), ("q", "i")]))
+    return _matvec_kernel("bicg", S, arrays, [s0, s1], "q")
+
+
+MULTI_REGISTRY = {"2mm": _twomm, "3mm": _3mm, "mvt": _mvt, "atax": _atax, "bicg": _bicg}
