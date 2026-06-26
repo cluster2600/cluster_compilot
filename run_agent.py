@@ -9,8 +9,9 @@ import argparse
 from compilot.backend_isl import environment
 from compilot.agent import run_dialogue, run_dialogue_multi, best_of_k
 from compilot.llm import GeminiClient, MockClient
-from compilot.kernels import MULTI_REGISTRY
+from compilot.kernels import MULTI_REGISTRY, STENCIL_REGISTRY
 from compilot.multikernel import MultiEnvironment
+from compilot.stencil import StencilEnvironment
 
 
 def main():
@@ -24,9 +25,14 @@ def main():
 
     make = (lambda: MockClient()) if args.mock else (lambda: GeminiClient(model=args.model))
 
-    if args.kernel in MULTI_REGISTRY:                       # multi-statement kernel
-        menv = MultiEnvironment(MULTI_REGISTRY[args.kernel]())
-        print(f"kernel={args.kernel} (multi-statement, {len(menv.mk.statements)} stmts)  "
+    if args.kernel in MULTI_REGISTRY or args.kernel in STENCIL_REGISTRY:   # >1 statement
+        if args.kernel in STENCIL_REGISTRY:
+            menv = StencilEnvironment(STENCIL_REGISTRY[args.kernel]())
+            kind = "stencil"
+        else:
+            menv = MultiEnvironment(MULTI_REGISTRY[args.kernel]())
+            kind = "multi-statement"
+        print(f"kernel={args.kernel} ({kind}, {len(menv.mk.statements)} stmts)  "
               f"baseline={menv.baseline()['time']:.4f}s  driver={'mock' if args.mock else args.model}\n")
         sp, best = run_dialogue_multi(menv, make(), max_iters=args.iters)
         print(f"\n=== BEST {sp:.2f}x ===")

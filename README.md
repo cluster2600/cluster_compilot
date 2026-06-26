@@ -68,7 +68,7 @@ All suites pass; the benchmark is reproducible (`python3 bench.py`). Full output
 | `tests/` | legality (10/10), environment, multi-statement (3/3), multi-kernel (10 PolyBench), fusion, Tiramisu parity (4/4) |
 | `third_party/tiramisu/` | exact Tiramisu backend — **built** (`libtiramisu.dylib`); gitignored |
 
-**Kernels (17):** single — `gemm`, `syrk`, `syr2k`, `syrk_tri`, `syr2k_tri`, `floydwarshall`; multi-statement — `2mm`, `3mm`, `mvt`, `atax`, `bicg`, `gesummv`, `gemver`, `covariance`; stencils — `jacobi1d`, `jacobi2d`, `seidel2d`. Spanning matmul, matvec, reduction, **triangular**, **fusion**, **in-place**, **datamining**, and **time-stepped stencils** (jacobi parallelizes; seidel carries dependences → needs skewing, correctly rejected).
+**Kernels (18):** single — `gemm`, `syrk`, `syr2k`, `syrk_tri`, `syr2k_tri`, `floydwarshall`; multi-statement — `2mm`, `3mm`, `mvt`, `atax`, `bicg`, `gesummv`, `gemver`, `covariance`, `doitgen` (3-D); stencils — `jacobi1d`, `jacobi2d`, `seidel2d`. Spanning matmul, matvec, reduction, **triangular**, **fusion**, **in-place**, **datamining**, **3-D**, and **time-stepped stencils** (jacobi parallelizes; seidel carries dependences → needs skewing, correctly rejected). Drive any of them: `python3 run_agent.py --kernel <name>`.
 
 ## Status & roadmap
 
@@ -76,9 +76,10 @@ All suites pass; the benchmark is reproducible (`python3 bench.py`). Full output
 
 **Baseline:** `baselines.py` — **ComPilot vs naive auto-parallelization**: geomean **6.17× vs 3.31× → 1.86× faster** (matmul kernels 4.6–6.2× faster; matvec memory-bound, ~1.1–1.35×). Polyhedral **Pluto** itself does **not build** on this toolchain (Darwin-27/clang-22 rejects its bundled piplib's legacy K&R C — `conflicting types`/`unknown type name`; the LLVM-14 clang++ can't link C++), so naive auto-parallel is the proxy comparison.
 
+**Tiramisu backend — complete:** legality (ISL↔Tiramisu **4/4**) + Halide **codegen** (128 KB object) + **execution** (runs+times its own generated code via a Halide-buffer wrapper: tile2d+parallel → **1.7× measured by Tiramisu**).
+
 **Pending:**
-- **Tiramisu execution timing** — Tiramisu Halide **codegen works** (lowers a scheduled GEMM to a ~128 KB object); the remaining piece is a Halide-buffer wrapper to *run+time* that object (clang already measures speedup)
-- **full PolyBench/C 4.2.1 (150 instances)** — **17/30 kernels**; **every computational pattern now works** (matmul, matvec, reduction, triangular, multi-statement, fusion, in-place, datamining, time-stepped stencils). The remaining ~13 are variations: loop-carried solvers (cholesky/lu/ludcmp/trisolv/durbin), 3-D arrays (doitgen/heat-3d), multi-field stencils (fdtd-2d/adi), correlation; plus the ×5 size classes
+- **full PolyBench/C 4.2.1 (150 instances)** — **18/30 kernels**; **every computational pattern works** (matmul, matvec, reduction, triangular, multi-statement, fusion, in-place, datamining, time-stepped stencils, **3-D**). The remaining ~12 are loop-carried *solvers* (cholesky/lu/ludcmp/trisolv/durbin — need imperfect-nest codegen) and complex stencils (heat-3d/fdtd-2d/adi), correlation; plus the ×5 size classes
 
 ## Reference
 

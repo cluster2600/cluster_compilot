@@ -96,6 +96,7 @@ int main(void){{
 class StencilEnvironment:
     def __init__(self, sk):
         self.sk = sk
+        self.mk = sk            # alias so the multi-statement agent dialogue works unchanged
         self.deps = [dependences(s.poly) for s in sk.statements]
         self._baseline = None
 
