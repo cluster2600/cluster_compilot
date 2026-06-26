@@ -27,6 +27,7 @@ MULTI = {
     "atax": ["parallel(i)", ""],
     "bicg": ["", "parallel(i)"],
     "gesummv": ["parallel(i)", "parallel(i)"],
+    "gemver": ["parallel(i)", "parallel(i)", "parallel(i)", "parallel(i)"],
 }
 
 

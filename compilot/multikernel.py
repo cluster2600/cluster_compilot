@@ -31,7 +31,8 @@ class MStmt:
     output: str                 # primary array written (zeroed each rep)
     poly: PolyKernel            # for legality of this statement's schedule
     reduction: set = field(default_factory=set)
-    extra_outputs: list = field(default_factory=list)   # also zeroed (fused groups)
+    extra_outputs: list = field(default_factory=list)   # also reset (fused groups)
+    reset: str = "zero"   # per-rep reset of outputs: "zero" | "reinit" (to input) | "none"
 
 
 @dataclass
@@ -62,10 +63,12 @@ def _emit_program(mk, scheds):
 
     body_lines = []
     for s, sched in zip(mk.statements, scheds):
-        for outp in [s.output, *s.extra_outputs]:
-            zd0, zd1 = mk.arrays[outp]
-            body_lines.append(f"    for (int r_=0;r_<{zd0};r_++) for (int c_=0;c_<{zd1};c_++) "
-                              f"{outp}[r_*{zd1}+c_]=0.0;")
+        if s.reset != "none":
+            for outp in [s.output, *s.extra_outputs]:
+                zd0, zd1 = mk.arrays[outp]
+                rhs = (f"(double)(((r_*7+c_*13)%97))/97.0" if s.reset == "reinit" else "0.0")
+                body_lines.append(f"    for (int r_=0;r_<{zd0};r_++) for (int c_=0;c_<{zd1};c_++) "
+                                  f"{outp}[r_*{zd1}+c_]={rhs};")
         # reuse the single-statement nest emitter
         fake = _Kernelish(s.loops, s.body)
         levels = _cg._build_levels(fake, _schedule.parse(sched) if sched.strip() else [])

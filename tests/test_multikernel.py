@@ -16,6 +16,7 @@ LEGAL = {
     "atax": ["parallel(i)", ""],
     "bicg": ["", "parallel(i)"],
     "gesummv": ["parallel(i)", "parallel(i)"],
+    "gemver": ["parallel(i)", "parallel(i)", "parallel(i)", "parallel(i)"],
 }
 # parallelizing a reduction loop must be rejected
 ILLEGAL = {
@@ -24,6 +25,7 @@ ILLEGAL = {
     "atax": ["parallel(j)", ""],   # s0 reduces over j
     "bicg": ["parallel(i)", ""],   # s0 reduces over i
     "gesummv": ["parallel(j)", ""],  # s0 reduces over j
+    "gemver": ["", "parallel(j)", "", ""],  # s2 reduces over j
 }
 SPEEDS_UP = {"2mm", "3mm"}         # matmul kernels should beat 1x
 

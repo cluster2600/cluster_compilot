@@ -224,5 +224,30 @@ def gesummv_fused():
     return MultiKernel("gesummv_fused", {"N": S}, arrays, [f], "y")
 
 
+def _gemver():
+    from .multikernel import MStmt, MultiKernel
+    S = 1000
+    d2 = "0<=i<N and 0<=j<N"
+    arrays = {x: ("N", "N") if x == "A" else ("N", 1)
+              for x in ("A", "u1", "v1", "u2", "v2", "x", "y", "z", "w")}
+    # S1: A = A + u1*v1^T + u2*v2^T  (in-place, element-wise)
+    s1 = MStmt([("i", "N"), ("j", "N")], "A[i*N+j] += u1[i]*v1[j] + u2[i]*v2[j];", "A",
+               reset="reinit",
+               poly=_poly("A", ["i", "j"], d2, [("A", "i,j")],
+                          [("u1", "i"), ("v1", "j"), ("u2", "i"), ("v2", "j"), ("A", "i,j")]))
+    # S2: x = x + beta * A^T * y   (beta = 1.5)
+    s2 = MStmt([("i", "N"), ("j", "N")], "x[i] += 1.5*A[j*N+i]*y[j];", "x", reduction={"j"},
+               reset="reinit",
+               poly=_poly("x", ["i", "j"], d2, [("x", "i")], [("A", "j,i"), ("y", "j"), ("x", "i")]))
+    # S3: x = x + z   (accumulate onto S2's x -> reset none)
+    s3 = MStmt([("i", "N")], "x[i] += z[i];", "x", reset="none",
+               poly=_poly("x", ["i"], "0<=i<N", [("x", "i")], [("x", "i"), ("z", "i")]))
+    # S4: w = w + alpha * A * x   (alpha = 1.5)
+    s4 = MStmt([("i", "N"), ("j", "N")], "w[i] += 1.5*A[i*N+j]*x[j];", "w", reduction={"j"},
+               reset="reinit",
+               poly=_poly("w", ["i", "j"], d2, [("w", "i")], [("A", "i,j"), ("x", "j"), ("w", "i")]))
+    return MultiKernel("gemver", {"N": S}, arrays, [s1, s2, s3, s4], "w")
+
+
 MULTI_REGISTRY = {"2mm": _twomm, "3mm": _3mm, "mvt": _mvt, "atax": _atax,
-                  "bicg": _bicg, "gesummv": _gesummv}
+                  "bicg": _bicg, "gesummv": _gesummv, "gemver": _gemver}
