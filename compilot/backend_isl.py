@@ -19,7 +19,7 @@ from .scheduler import build_theta
 
 # transforms the C codegen can currently emit (legality covers all 9; execution
 # of skew/reverse/fuse/shift is added with their codegen).
-_EXECUTABLE = {"interchange", "reorder", "tile", "tile2d", "tile3d", "parallel", "unroll", "reverse"}
+_EXECUTABLE = {"interchange", "reorder", "tile", "tile2d", "tile3d", "parallel", "unroll", "reverse", "skew"}
 
 
 def environment(name):

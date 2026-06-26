@@ -20,6 +20,7 @@ class Level:
     step: str = "1"
     pragmas: list = field(default_factory=list)
     rev: bool = False
+    skew: tuple = None      # (src_var, factor): iterate var+factor*src, recover var
 
 
 def _build_levels(kernel, ops):
@@ -61,6 +62,8 @@ def _build_levels(kernel, ops):
             levels[find(args[0])].pragmas.append(f"#pragma clang loop unroll_count({args[1]})")
         elif op == "reverse":
             levels[find(args[0])].rev = True
+        elif op == "skew":
+            levels[find(args[0])].skew = (args[1], args[2])
         else:
             raise ValueError(f"codegen cannot emit {op!r} yet")
     return levels
@@ -71,7 +74,12 @@ def _emit_nest(kernel, levels, indent="    "):
     for lv in levels:
         for p in lv.pragmas:
             out.append(pad + p)
-        if lv.rev:
+        if lv.skew:
+            src, f = lv.skew
+            off = f"({f})*({src})"
+            out.append(pad + f"for (int {lv.var}_s = ({lv.lo}) + {off}; {lv.var}_s < ({lv.hi}) + {off}; {lv.var}_s += {lv.step}) {{")
+            out.append(pad + f"    int {lv.var} = {lv.var}_s - {off};")
+        elif lv.rev:
             out.append(pad + f"for (int {lv.var} = ({lv.hi}) - 1; {lv.var} >= ({lv.lo}); {lv.var} -= {lv.step}) {{")
         else:
             out.append(pad + f"for (int {lv.var} = {lv.lo}; {lv.var} < {lv.hi}; {lv.var} += {lv.step}) {{")
