@@ -68,7 +68,7 @@ All suites pass; the benchmark is reproducible (`python3 bench.py`). Full output
 | `tests/` | legality (10/10), environment, multi-statement (3/3), multi-kernel (10 PolyBench), fusion, Tiramisu parity (4/4) |
 | `third_party/tiramisu/` | exact Tiramisu backend — **built** (`libtiramisu.dylib`); gitignored |
 
-**Kernels (14):** single — `gemm`, `syrk`, `syr2k`, `syrk_tri`, `syr2k_tri`, `floydwarshall`; multi-statement — `2mm`, `3mm`, `mvt`, `atax`, `bicg`, `gesummv`, `gemver`, `covariance`. Spanning matmul, matvec, reduction, **triangular** domains, **fusion**, **in-place** (reset zero/reinit/none), and **datamining**.
+**Kernels (17):** single — `gemm`, `syrk`, `syr2k`, `syrk_tri`, `syr2k_tri`, `floydwarshall`; multi-statement — `2mm`, `3mm`, `mvt`, `atax`, `bicg`, `gesummv`, `gemver`, `covariance`; stencils — `jacobi1d`, `jacobi2d`, `seidel2d`. Spanning matmul, matvec, reduction, **triangular**, **fusion**, **in-place**, **datamining**, and **time-stepped stencils** (jacobi parallelizes; seidel carries dependences → needs skewing, correctly rejected).
 
 ## Status & roadmap
 
@@ -78,7 +78,7 @@ All suites pass; the benchmark is reproducible (`python3 bench.py`). Full output
 
 **Pending:**
 - **Tiramisu execution timing** — Tiramisu Halide **codegen works** (lowers a scheduled GEMM to a ~128 KB object); the remaining piece is a Halide-buffer wrapper to *run+time* that object (clang already measures speedup)
-- **full PolyBench/C 4.2.1 (150 instances)** — **14/30 kernels** done (matmul/matvec/triangular/multi-statement/fusion/in-place/datamining all working). The rest need: time-loop support (stencils — jacobi/seidel/heat/fdtd/adi), loop-carried solvers (cholesky/lu/trisolv/durbin), 3-D arrays (doitgen); plus the ×5 size classes
+- **full PolyBench/C 4.2.1 (150 instances)** — **17/30 kernels**; **every computational pattern now works** (matmul, matvec, reduction, triangular, multi-statement, fusion, in-place, datamining, time-stepped stencils). The remaining ~13 are variations: loop-carried solvers (cholesky/lu/ludcmp/trisolv/durbin), 3-D arrays (doitgen/heat-3d), multi-field stencils (fdtd-2d/adi), correlation; plus the ×5 size classes
 
 ## Reference
 
