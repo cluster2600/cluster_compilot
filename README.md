@@ -74,8 +74,9 @@ All suites pass; the benchmark is reproducible (`python3 bench.py`). Full output
 
 **Working & live:** ISL legality oracle + parallelism check; **all 9 primitives execute** (incl. `skew`, `reverse`, `fuse`); clang/OpenMP execution; full agent dialogue with Gemini via OpenBao for **both single- and multi-statement** kernels; **10 kernels** (4 single + 6 multi: 2mm/3mm/mvt/atax/bicg/gesummv); exact Tiramisu backend **built** and driven (ISL↔Tiramisu **4/4**); multi-statement legality (3/3) + execution (2mm live **28.6×**); loop **fusion** (gesummv 1.7×); evaluation harness — **ComPilot@T, ComPilot_K@T, bootstrap 95% CIs, token/cost (RQ1/RQ2/RQ9)**.
 
+**Baseline:** `baselines.py` — **ComPilot vs naive auto-parallelization**: geomean **6.17× vs 3.31× → 1.86× faster** (matmul kernels 4.6–6.2× faster; matvec memory-bound, ~1.1–1.35×). Polyhedral **Pluto** itself does **not build** on this toolchain (Darwin-27/clang-22 rejects its bundled piplib's legacy K&R C — `conflicting types`/`unknown type name`; the LLVM-14 clang++ can't link C++), so naive auto-parallel is the proxy comparison.
+
 **Pending:**
-- **Pluto baseline** — building polyhedral Pluto from source (Polly isn't in brew clang)
 - **Tiramisu Halide codegen+execution** — speedup measured *by Tiramisu* (we already measure via clang)
 - **full PolyBench/C 4.2.1 (150 instances)** — 10 kernels done; the rest is mechanical (rectangular kernels) plus triangular-domain bounds for symm/trmm/cholesky-family
 
