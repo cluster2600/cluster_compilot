@@ -18,8 +18,10 @@ import random
 import statistics as stats
 
 from compilot.backend_isl import environment
-from compilot.agent import run_dialogue
+from compilot.agent import run_dialogue, run_dialogue_multi
 from compilot.llm import GeminiClient, MockClient
+from compilot.kernels import MULTI_REGISTRY
+from compilot.multikernel import MultiEnvironment
 
 # gemini-2.5-flash list price (USD per 1M tokens); override with --price-in/--price-out
 PRICE_IN, PRICE_OUT = 0.30, 2.50
@@ -51,7 +53,7 @@ def best_of_k_estimate(pool, k, seed=777):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mock", action="store_true")
-    ap.add_argument("--kernels", default="gemm,syrk,syr2k,floydwarshall")
+    ap.add_argument("--kernels", default="gemm,syrk,syr2k,floydwarshall,2mm,3mm,mvt,atax,bicg,gesummv")
     ap.add_argument("--pool", type=int, default=8, help="independent runs per kernel")
     ap.add_argument("--k", type=int, default=5, help="K for best-of-K")
     ap.add_argument("--iters", type=int, default=15)
@@ -65,11 +67,15 @@ def main():
     per_kernel = {}
 
     for name in names:
-        env = environment(name)
+        is_multi = name in MULTI_REGISTRY
+        env = MultiEnvironment(MULTI_REGISTRY[name]()) if is_multi else environment(name)
         pool = []
         for r in range(args.pool):
             llm = MockClient() if args.mock else GeminiClient(model=args.model)
-            sp, _, _ = run_dialogue(env, llm, max_iters=args.iters, verbose=False)
+            if is_multi:
+                sp, _ = run_dialogue_multi(env, llm, max_iters=args.iters, verbose=False)
+            else:
+                sp, _, _ = run_dialogue(env, llm, max_iters=args.iters, verbose=False)
             pool.append(sp)
             tok_in += getattr(llm, "in_tokens", 0)
             tok_out += getattr(llm, "out_tokens", 0)

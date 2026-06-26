@@ -128,19 +128,23 @@ class MultiEnvironment:
 
     def evaluate(self, scheds):
         """scheds: list of schedule strings (one per statement)."""
-        # per-statement legality
-        for s, D, sched in zip(self.mk.statements, self.deps, scheds):
-            if not sched.strip():
-                continue
-            ops = _schedule.parse(sched)
-            theta, labels, par, _ = build_theta(s.poly, ops)
-            if not is_legal(D, theta)[0]:
-                return {"status": "illegal", "stmt": s.output, "speedup": None}
-            for lbl, lvl in par:
-                if not is_parallel(D, theta, lvl):
-                    return {"status": "parallel_illegal", "stmt": s.output, "speedup": None}
+        try:
+            # per-statement legality
+            for s, D, sched in zip(self.mk.statements, self.deps, scheds):
+                if not sched.strip():
+                    continue
+                ops = _schedule.parse(sched)
+                theta, labels, par, _ = build_theta(s.poly, ops)
+                if not is_legal(D, theta)[0]:
+                    return {"status": "illegal", "stmt": s.output, "speedup": None}
+                for lbl, lvl in par:
+                    if not is_parallel(D, theta, lvl):
+                        return {"status": "parallel_illegal", "stmt": s.output, "speedup": None}
+            program = _emit_program(self.mk, scheds)
+        except (ValueError, KeyError) as e:
+            return {"status": "invalid", "speedup": None, "detail": str(e)}
         base = self.baseline()
-        r = _runner.compile_and_run(_emit_program(self.mk, scheds))
+        r = _runner.compile_and_run(program)
         if not r["ok"]:
             return {"status": r["error"], "speedup": None, "detail": r.get("detail", "")}
         if abs(r["checksum"] - base["checksum"]) > 1e-6 * max(1.0, abs(base["checksum"])):
