@@ -65,18 +65,19 @@ All suites pass; the benchmark is reproducible (`python3 bench.py`). Full output
 | `compilot/backends/tiramisu.py` | drive the **real** libtiramisu legality |
 | `compilot/prompt.py` · `feedback.py` · `llm.py` · `secrets.py` · `agent.py` | context prompt · 5 feedback categories · Gemini client · OpenBao · dialogue + best-of-K |
 | `run_agent.py` · `eval.py` · `bench.py` · `evaluate.py` | run the agent · geomean eval · benchmark · **full metrics (ComPilot@T, CIs, cost)** |
-| `tests/` | legality (10/10), environment, multi-statement (3/3), multi-kernel/2mm (3/3), Tiramisu parity (4/4) |
+| `tests/` | legality (10/10), environment, multi-statement (3/3), multi-kernel (10 PolyBench), fusion, Tiramisu parity (4/4) |
 | `third_party/tiramisu/` | exact Tiramisu backend — **built** (`libtiramisu.dylib`); gitignored |
 
-**Kernels:** `gemm`, `syrk`, `syr2k`, `floydwarshall`.
+**Kernels (10):** single — `gemm`, `syrk`, `syr2k`, `floydwarshall`; multi-statement — `2mm`, `3mm`, `mvt`, `atax`, `bicg`, `gesummv`.
 
 ## Status & roadmap
 
-**Working & live:** ISL legality oracle + parallelism check; 9-primitive DSL; clang/OpenMP execution; full agent dialogue with Gemini via OpenBao; 4 single-statement + 1 multi-statement kernel (2mm); `reverse` codegen + in-place reset; exact Tiramisu backend **built** and driven (ISL↔Tiramisu **4/4**); multi-statement legality (3/3) **and execution** (2mm 19–22×); evaluation harness — **ComPilot@T, ComPilot_K@T, bootstrap 95% CIs, token/cost (RQ1/RQ2/RQ9)**.
+**Working & live:** ISL legality oracle + parallelism check; **all 9 primitives execute** (incl. `skew`, `reverse`, `fuse`); clang/OpenMP execution; full agent dialogue with Gemini via OpenBao for **both single- and multi-statement** kernels; **10 kernels** (4 single + 6 multi: 2mm/3mm/mvt/atax/bicg/gesummv); exact Tiramisu backend **built** and driven (ISL↔Tiramisu **4/4**); multi-statement legality (3/3) + execution (2mm live **28.6×**); loop **fusion** (gesummv 1.7×); evaluation harness — **ComPilot@T, ComPilot_K@T, bootstrap 95% CIs, token/cost (RQ1/RQ2/RQ9)**.
 
 **Pending:**
-- **A.** codegen+execution via Tiramisu's Halide path (we already measure speedup via clang)
-- **B.** agent integration for multi-statement kernels; loop **fusion** across statements (`fuse`/`shift` codegen, on top of `polyhedral_multi`); more PolyBench kernels (3mm/gemver/atax/bicg) → full PolyBench/C 4.2.1 (150 instances); `skew` codegen; Pluto baseline
+- **Pluto baseline** — building polyhedral Pluto from source (Polly isn't in brew clang)
+- **Tiramisu Halide codegen+execution** — speedup measured *by Tiramisu* (we already measure via clang)
+- **full PolyBench/C 4.2.1 (150 instances)** — 10 kernels done; the rest is mechanical (rectangular kernels) plus triangular-domain bounds for symm/trmm/cholesky-family
 
 ## Reference
 
