@@ -90,3 +90,25 @@ REGISTRY = {
     "floydwarshall": (FLOYD, FLOYD_POLY),
 }
 KERNELS = {name: ek for name, (ek, _) in REGISTRY.items()}
+
+
+# ---- multi-statement kernels (sequence of statements; see multikernel.py) ----
+def _twomm():
+    from .multikernel import MStmt, MultiKernel
+    S = 256
+    s0 = MStmt(loops=[("i", "N"), ("j", "M"), ("k", "K")],
+               body="tmp[i*M+j] += A[i*K+k]*B[k*M+j];", output="tmp", reduction={"k"},
+               poly=PolyKernel("s0", ["i", "j", "k"], "0<=i<N and 0<=j<M and 0<=k<K",
+                               [("tmp", "i,j")], [("A", "i,k"), ("B", "k,j"), ("tmp", "i,j")],
+                               ["N", "M", "K"]))
+    s1 = MStmt(loops=[("i", "N"), ("j", "L"), ("l", "M")],
+               body="D[i*L+j] += tmp[i*M+l]*C[l*L+j];", output="D", reduction={"l"},
+               poly=PolyKernel("s1", ["i", "j", "l"], "0<=i<N and 0<=j<L and 0<=l<M",
+                               [("D", "i,j")], [("tmp", "i,l"), ("C", "l,j"), ("D", "i,j")],
+                               ["N", "L", "M"]))
+    return MultiKernel("2mm", {"N": S, "M": S, "K": S, "L": S},
+                       {"A": ("N", "K"), "B": ("K", "M"), "tmp": ("N", "M"),
+                        "C": ("M", "L"), "D": ("N", "L")}, [s0, s1], final="D")
+
+
+MULTI_REGISTRY = {"2mm": _twomm}
