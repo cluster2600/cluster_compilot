@@ -23,9 +23,20 @@ class Level:
     skew: tuple = None      # (src_var, factor): iterate var+factor*src, recover var
 
 
+def _loop_lohi(entry):
+    """A loop entry is (var, hi) [lo=0] or (var, lo, hi)."""
+    if len(entry) == 3:
+        return entry[0], entry[1], entry[2]
+    return entry[0], "0", entry[1]
+
+
 def _build_levels(kernel, ops):
-    bound = {v: b for v, b in kernel.loops}          # var -> bound name
-    levels = [Level(v, "0", b) for v, b in kernel.loops]
+    bound = {}                                        # var -> hi (for tiling MIN)
+    levels = []
+    for entry in kernel.loops:
+        v, lo, hi = _loop_lohi(entry)
+        bound[v] = hi
+        levels.append(Level(v, lo, hi))
 
     def find(var):
         for i, lv in enumerate(levels):

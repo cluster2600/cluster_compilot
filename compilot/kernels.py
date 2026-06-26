@@ -270,3 +270,31 @@ def _covariance():
 MULTI_REGISTRY = {"2mm": _twomm, "3mm": _3mm, "mvt": _mvt, "atax": _atax,
                   "bicg": _bicg, "gesummv": _gesummv, "gemver": _gemver,
                   "covariance": _covariance}
+
+
+# ---- stencils: a sequential time loop over scheduled spatial sweeps ---------
+def _jacobi1d():
+    from .stencil import SStmt, StencilKernel
+    N, T, d = 2000000, 100, "1<=i<N-1"
+    s0 = SStmt([("i", "1", "N-1")], "B[i] = 0.33333*(A[i-1]+A[i]+A[i+1]);",
+               PolyKernel("B", ["i"], d, [("B", "i")], [("A", "i")], ["N"]))
+    s1 = SStmt([("i", "1", "N-1")], "A[i] = 0.33333*(B[i-1]+B[i]+B[i+1]);",
+               PolyKernel("A", ["i"], d, [("A", "i")], [("B", "i")], ["N"]))
+    return StencilKernel("jacobi1d", {"N": N, "TSTEPS": T}, {"A": ("N", 1), "B": ("N", 1)},
+                         [s0, s1], reset={"A": "reinit", "B": "reinit"}, final="A")
+
+
+def _jacobi2d():
+    from .stencil import SStmt, StencilKernel
+    N, T, d = 1000, 50, "1<=i<N-1 and 1<=j<N-1"
+    s0 = SStmt([("i", "1", "N-1"), ("j", "1", "N-1")],
+               "B[i*N+j] = 0.2*(A[i*N+j]+A[i*N+j-1]+A[i*N+j+1]+A[(i-1)*N+j]+A[(i+1)*N+j]);",
+               PolyKernel("B", ["i", "j"], d, [("B", "i,j")], [("A", "i,j")], ["N"]))
+    s1 = SStmt([("i", "1", "N-1"), ("j", "1", "N-1")],
+               "A[i*N+j] = 0.2*(B[i*N+j]+B[i*N+j-1]+B[i*N+j+1]+B[(i-1)*N+j]+B[(i+1)*N+j]);",
+               PolyKernel("A", ["i", "j"], d, [("A", "i,j")], [("B", "i,j")], ["N"]))
+    return StencilKernel("jacobi2d", {"N": N, "TSTEPS": T}, {"A": ("N", "N"), "B": ("N", "N")},
+                         [s0, s1], reset={"A": "reinit", "B": "reinit"}, final="A")
+
+
+STENCIL_REGISTRY = {"jacobi1d": _jacobi1d, "jacobi2d": _jacobi2d}
