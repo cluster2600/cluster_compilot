@@ -170,4 +170,31 @@ def _bicg():
     return _matvec_kernel("bicg", S, arrays, [s0, s1], "q")
 
 
-MULTI_REGISTRY = {"2mm": _twomm, "3mm": _3mm, "mvt": _mvt, "atax": _atax, "bicg": _bicg}
+def _gesummv():
+    from .multikernel import MStmt
+    S = 2000
+    d = "0<=i<N and 0<=j<N"
+    arrays = {"A": ("N", "N"), "B": ("N", "N"), "x": ("N", 1), "tmp": ("N", 1), "y": ("N", 1)}
+    s0 = MStmt([("i", "N"), ("j", "N")], "tmp[i] += A[i*N+j]*x[j];", "tmp", reduction={"j"},
+               poly=_poly("tmp", ["i", "j"], d, [("tmp", "i")], [("A", "i,j"), ("x", "j"), ("tmp", "i")]))
+    s1 = MStmt([("i", "N"), ("j", "N")], "y[i] += B[i*N+j]*x[j];", "y", reduction={"j"},
+               poly=_poly("y", ["i", "j"], d, [("y", "i")], [("B", "i,j"), ("x", "j"), ("y", "i")]))
+    return _matvec_kernel("gesummv", S, arrays, [s0, s1], "y")
+
+
+def gesummv_fused():
+    """gesummv as one fused nest (both matvecs share `x`) — for the fusion demo."""
+    from .multikernel import MStmt, MultiKernel
+    S = 2000
+    arrays = {"A": ("N", "N"), "B": ("N", "N"), "x": ("N", 1), "tmp": ("N", 1), "y": ("N", 1)}
+    f = MStmt([("i", "N"), ("j", "N")],
+              "tmp[i] += A[i*N+j]*x[j]; y[i] += B[i*N+j]*x[j];", "tmp", reduction={"j"},
+              extra_outputs=["y"],
+              poly=_poly("f", ["i", "j"], "0<=i<N and 0<=j<N",
+                         [("tmp", "i"), ("y", "i")],
+                         [("A", "i,j"), ("B", "i,j"), ("x", "j"), ("tmp", "i"), ("y", "i")]))
+    return MultiKernel("gesummv_fused", {"N": S}, arrays, [f], "y")
+
+
+MULTI_REGISTRY = {"2mm": _twomm, "3mm": _3mm, "mvt": _mvt, "atax": _atax,
+                  "bicg": _bicg, "gesummv": _gesummv}

@@ -21,12 +21,17 @@ from .scheduler import build_theta
 
 @dataclass
 class MStmt:
-    """One statement: its own loop nest (like Kernel) + a paired polyhedral spec."""
+    """One statement (or a fused group): a loop nest + a paired polyhedral spec.
+
+    A FUSED group is one MStmt whose `body` holds several statements' bodies in a
+    shared nest, with `extra_outputs` naming the additional arrays to zero.
+    """
     loops: list                 # [("i","N"), ...]
-    body: str
-    output: str                 # array this statement writes (zeroed each rep)
+    body: str                   # one or more "...;" statements (fused)
+    output: str                 # primary array written (zeroed each rep)
     poly: PolyKernel            # for legality of this statement's schedule
     reduction: set = field(default_factory=set)
+    extra_outputs: list = field(default_factory=list)   # also zeroed (fused groups)
 
 
 @dataclass
@@ -40,7 +45,10 @@ class MultiKernel:
 
 def _emit_program(mk, scheds):
     """Generate one C program running every statement (scheduled) in order, timed."""
-    outputs = {s.output for s in mk.statements}
+    outputs = set()
+    for s in mk.statements:
+        outputs.add(s.output)
+        outputs.update(s.extra_outputs)
     sizes = "\n".join(f"  const int {k} = {v};" for k, v in mk.sizes.items())
     allocs = "\n".join(f"  double *{a} = malloc((size_t){d[0]}*{d[1]}*sizeof(double));"
                        for a, d in mk.arrays.items())
@@ -54,9 +62,10 @@ def _emit_program(mk, scheds):
 
     body_lines = []
     for s, sched in zip(mk.statements, scheds):
-        od0, od1 = mk.arrays[s.output]
-        body_lines.append(f"    for (int r_=0;r_<{od0};r_++) for (int c_=0;c_<{od1};c_++) "
-                          f"{s.output}[r_*{od1}+c_]=0.0;")
+        for outp in [s.output, *s.extra_outputs]:
+            zd0, zd1 = mk.arrays[outp]
+            body_lines.append(f"    for (int r_=0;r_<{zd0};r_++) for (int c_=0;c_<{zd1};c_++) "
+                              f"{outp}[r_*{zd1}+c_]=0.0;")
         # reuse the single-statement nest emitter
         fake = _Kernelish(s.loops, s.body)
         levels = _cg._build_levels(fake, _schedule.parse(sched) if sched.strip() else [])
