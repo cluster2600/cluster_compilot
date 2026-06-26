@@ -68,7 +68,7 @@ All suites pass; the benchmark is reproducible (`python3 bench.py`). Full output
 | `tests/` | legality (10/10), environment, multi-statement (3/3), multi-kernel (10 PolyBench), fusion, Tiramisu parity (4/4) |
 | `third_party/tiramisu/` | exact Tiramisu backend — **built** (`libtiramisu.dylib`); gitignored |
 
-**Kernels (10):** single — `gemm`, `syrk`, `syr2k`, `floydwarshall`; multi-statement — `2mm`, `3mm`, `mvt`, `atax`, `bicg`, `gesummv`.
+**Kernels (14):** single — `gemm`, `syrk`, `syr2k`, `syrk_tri`, `syr2k_tri`, `floydwarshall`; multi-statement — `2mm`, `3mm`, `mvt`, `atax`, `bicg`, `gesummv`, `gemver`, `covariance`. Spanning matmul, matvec, reduction, **triangular** domains, **fusion**, **in-place** (reset zero/reinit/none), and **datamining**.
 
 ## Status & roadmap
 
@@ -78,7 +78,7 @@ All suites pass; the benchmark is reproducible (`python3 bench.py`). Full output
 
 **Pending:**
 - **Tiramisu execution timing** — Tiramisu Halide **codegen works** (lowers a scheduled GEMM to a ~128 KB object); the remaining piece is a Halide-buffer wrapper to *run+time* that object (clang already measures speedup)
-- **full PolyBench/C 4.2.1 (150 instances)** — 10 kernels done; the rest is mechanical (rectangular kernels) plus codegen extensions for triangular-domain (symm/trmm/cholesky) and in-place/stencil (gemver/jacobi) families
+- **full PolyBench/C 4.2.1 (150 instances)** — **14/30 kernels** done (matmul/matvec/triangular/multi-statement/fusion/in-place/datamining all working). The rest need: time-loop support (stencils — jacobi/seidel/heat/fdtd/adi), loop-carried solvers (cholesky/lu/trisolv/durbin), 3-D arrays (doitgen); plus the ×5 size classes
 
 ## Reference
 
