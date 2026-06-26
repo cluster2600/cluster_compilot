@@ -50,35 +50,28 @@ def _emit_program(mk, scheds):
     for s in mk.statements:
         outputs.add(s.output)
         outputs.update(s.extra_outputs)
+    tot = lambda a: "*".join(str(x) for x in mk.arrays[a])   # total elements (any rank)
     sizes = "\n".join(f"  const int {k} = {v};" for k, v in mk.sizes.items())
-    allocs = "\n".join(f"  double *{a} = malloc((size_t){d[0]}*{d[1]}*sizeof(double));"
-                       for a, d in mk.arrays.items())
-    inits = []
-    for a, (d0, d1) in mk.arrays.items():
-        if a in outputs:
-            continue
-        inits.append(f"  for (int r_=0;r_<{d0};r_++) for (int c_=0;c_<{d1};c_++) "
-                     f"{a}[r_*{d1}+c_]=(double)(((r_*7+c_*13)%97))/97.0;")
-    inits = "\n".join(inits)
+    allocs = "\n".join(f"  double *{a} = malloc((size_t)({tot(a)})*sizeof(double));"
+                       for a in mk.arrays)
+    inits = "\n".join(f"  for (long f_=0;f_<(long)({tot(a)});f_++) {a}[f_]=(double)((f_*13+7)%97)/97.0;"
+                      for a in mk.arrays if a not in outputs)
 
     body_lines = []
     for s, sched in zip(mk.statements, scheds):
         if s.reset != "none":
             for outp in [s.output, *s.extra_outputs]:
-                zd0, zd1 = mk.arrays[outp]
-                rhs = (f"(double)(((r_*7+c_*13)%97))/97.0" if s.reset == "reinit" else "0.0")
-                body_lines.append(f"    for (int r_=0;r_<{zd0};r_++) for (int c_=0;c_<{zd1};c_++) "
-                                  f"{outp}[r_*{zd1}+c_]={rhs};")
+                rhs = ("(double)((f_*13+7)%97)/97.0" if s.reset == "reinit" else "0.0")
+                body_lines.append(f"    for (long f_=0;f_<(long)({tot(outp)});f_++) {outp}[f_]={rhs};")
         # reuse the single-statement nest emitter
         fake = _Kernelish(s.loops, s.body)
         levels = _cg._build_levels(fake, _schedule.parse(sched) if sched.strip() else [])
         body_lines.append(_cg._emit_nest(fake, levels, indent="    "))
 
     nest = "\n".join(body_lines)
-    csum = ["  double sum=0;"]
+    csum = ["  double acc_=0;"]
     for a in sorted(outputs):
-        d0, d1 = mk.arrays[a]
-        csum.append(f"  for (int r_=0;r_<{d0};r_++) for (int c_=0;c_<{d1};c_++) sum+={a}[r_*{d1}+c_];")
+        csum.append(f"  for (long f_=0;f_<(long)({tot(a)});f_++) acc_+={a}[f_];")
     checksum = "\n".join(csum)
     frees = "\n".join(f"  free({a});" for a in mk.arrays)
     return f"""#include <stdio.h>

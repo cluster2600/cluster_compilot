@@ -313,4 +313,24 @@ def _seidel2d():
                          [s], reset={"A": "reinit"}, final="A")
 
 
+def _doitgen():
+    """3-D: sum[r][q][p] = Σs A[r][q][s]*C4[s][p]; then A = sum (in-place)."""
+    from .multikernel import MStmt, MultiKernel
+    R = Q = P = 64
+    dom = "0<=r<R and 0<=q<Q and 0<=p<P"
+    arrays = {"A": ("R", "Q", "P"), "C4": ("P", "P"), "sum": ("R", "Q", "P")}
+    s0 = MStmt([("r", "R"), ("q", "Q"), ("p", "P"), ("s", "P")],
+               "sum[r*Q*P+q*P+p] += A[r*Q*P+q*P+s]*C4[s*P+p];", "sum", reduction={"s"},
+               poly=PolyKernel("sum", ["r", "q", "p", "s"], dom + " and 0<=s<P",
+                               [("sum", "r,q,p")], [("A", "r,q,s"), ("C4", "s,p"), ("sum", "r,q,p")],
+                               ["R", "Q", "P"]))
+    s1 = MStmt([("r", "R"), ("q", "Q"), ("p", "P")], "A[r*Q*P+q*P+p] = sum[r*Q*P+q*P+p];", "A",
+               reset="reinit",
+               poly=PolyKernel("A", ["r", "q", "p"], dom, [("A", "r,q,p")], [("sum", "r,q,p")],
+                               ["R", "Q", "P"]))
+    return MultiKernel("doitgen", {"R": R, "Q": Q, "P": P}, arrays, [s0, s1], "A")
+
+
+MULTI_REGISTRY["doitgen"] = _doitgen
+
 STENCIL_REGISTRY = {"jacobi1d": _jacobi1d, "jacobi2d": _jacobi2d, "seidel2d": _seidel2d}

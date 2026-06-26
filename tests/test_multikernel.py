@@ -18,6 +18,7 @@ LEGAL = {
     "gesummv": ["parallel(i)", "parallel(i)"],
     "gemver": ["parallel(i)", "parallel(i)", "parallel(i)", "parallel(i)"],
     "covariance": ["parallel(j)", "parallel(i)", "tile2d(i,j,32,32)\nparallel(i_t)"],
+    "doitgen": ["parallel(r)", "parallel(r)"],
 }
 # parallelizing a reduction loop must be rejected
 ILLEGAL = {
@@ -28,6 +29,7 @@ ILLEGAL = {
     "gesummv": ["parallel(j)", ""],  # s0 reduces over j
     "gemver": ["", "parallel(j)", "", ""],  # s2 reduces over j
     "covariance": ["", "", "parallel(k)"],  # s3 reduces over k
+    "doitgen": ["parallel(s)", ""],  # s0 reduces over s
 }
 SPEEDS_UP = {"2mm", "3mm"}         # matmul kernels should beat 1x
 
