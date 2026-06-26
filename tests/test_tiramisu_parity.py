@@ -44,3 +44,9 @@ if __name__ == "__main__":
         assert tira is not None, f"Tiramisu bridge error on {txt}: {info[:200]}"
         assert ok, f"verdict mismatch on {txt}"
     print(f"\nISL vs real Tiramisu: {agree}/{len(CASES)} agree.")
+
+    # Tiramisu's real Halide codegen lowers a scheduled GEMM to an object file
+    size, info = T.codegen(S.parse("tile2d(i, j, 32, 32)\nparallel(i1)"))
+    print(f"[{'OK ' if size else 'FAIL'}] Tiramisu Halide codegen -> "
+          f"{size} bytes object" if size else f"[FAIL] codegen: {info[:200]}")
+    assert size and size > 0, f"Tiramisu codegen failed: {info[:200]}"

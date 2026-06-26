@@ -64,10 +64,12 @@ def _schedule_cpp(ops):
     return lines, newvars
 
 
-def gemm_program(ops):
+def gemm_program(ops, obj_path=None):
     sched_lines, newvars = _schedule_cpp(ops)
     if sched_lines is None:
         return None
+    cg = (f'    if (legal) {{ tiramisu::codegen({{&b_A, &b_B, &b_C}}, "{obj_path}"); '
+          f'printf("CODEGEN_OK\\n"); }}\n') if obj_path else ""
     decl_new = "".join(f' var {v}("{v}");\n' for v in newvars)
     sched = "\n".join(sched_lines)
     return f"""#include <tiramisu/tiramisu.h>
@@ -98,9 +100,40 @@ int main() {{
     prepare_schedules_for_legality_checks();
     bool legal = check_legality_of_function();
     printf("LEGAL %d\\n", legal ? 1 : 0);
-    return 0;
+{cg}    return 0;
 }}
 """
+
+
+def codegen(schedule_ops):
+    """Have Tiramisu generate a Halide object for a (legal) scheduled GEMM.
+
+    Returns (object_size_bytes, info) or (None, error). Proves the real compiler
+    lowers our scheduled kernel through its Halide codegen path.
+    """
+    d = tempfile.mkdtemp(prefix="tira_cg_")
+    obj = os.path.join(d, "gemm.o")
+    src = gemm_program(schedule_ops, obj_path=obj)
+    if src is None:
+        return None, "unsupported in tiramisu bridge"
+    try:
+        cpp, binp = os.path.join(d, "g.cpp"), os.path.join(d, "g")
+        with open(cpp, "w") as f:
+            f.write(src)
+        cc = ["clang++", "-std=c++17", cpp, "-o", binp,
+              f"-I{ROOT}/include", f"-I{HALIDE}/include", f"-I{ISL}/include",
+              f"-L{BUILD}", "-ltiramisu", f"-L{HALIDE}/lib", "-lHalide", f"-L{ISL}/lib", "-lisl",
+              f"-Wl,-rpath,{BUILD}", f"-Wl,-rpath,{HALIDE}/lib", f"-Wl,-rpath,{ISL}/lib"]
+        cp = subprocess.run(cc, capture_output=True, text=True, timeout=180)
+        if cp.returncode != 0:
+            return None, "compile_error: " + cp.stderr[-500:]
+        rp = subprocess.run([binp], capture_output=True, text=True, timeout=180, cwd=d)
+        if "CODEGEN_OK" in rp.stdout and os.path.exists(obj):
+            return os.path.getsize(obj), "ok"
+        return None, "codegen_failed: " + (rp.stdout + rp.stderr)[-400:]
+    finally:
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def legality(schedule_ops):
