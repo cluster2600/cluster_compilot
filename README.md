@@ -6,7 +6,16 @@ An off-the-shelf LLM acts as an agent that proposes loop transformations. A comp
 
 > **Status:** the agent runs live. Gemini 2.5-flash + ISL legality + clang execution reach **42× on GEMM** end-to-end. See [Roadmap](#status--roadmap).
 
-The paper checks legality with **Tiramisu** (a polyhedral compiler that wraps ISL). We use **ISL directly** (`islpy`) — the *same* legality mechanism — plus `clang -O3 + OpenMP` for measurement. An exact Tiramisu backend is being built in parallel for repro parity.
+The paper checks legality with **Tiramisu** (a polyhedral compiler that wraps ISL). We use **ISL directly** (`islpy`) — the *same* legality mechanism — plus `clang -O3 + OpenMP` for measurement. We also build the **real Tiramisu compiler** and cross-validate against it (4/4 — see [Test results](#test-results)).
+
+## Contents
+
+- [Architecture](#architecture) · [The optimization dialogue](#the-optimization-dialogue) · [Polyhedral legality](#polyhedral-legality-the-faithful-core) · [Backend abstraction](#backend-abstraction)
+- [**Documentation**](#documentation) — how it works
+- [**Building (step by step)**](#building-step-by-step)
+- [**User guide (step by step)**](#user-guide-step-by-step)
+- [**Test results**](#test-results) — real outputs + benchmark
+- [Repo layout](#repo-layout) · [Schedule DSL](#the-9-primitive-schedule-dsl) · [Status & roadmap](#status--roadmap)
 
 ---
 
