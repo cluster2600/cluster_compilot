@@ -82,28 +82,116 @@ The LLM may propose anything; ISL **proves** legality before any code runs — s
 flowchart LR
   AG["agent loop"] --> ENV["Environment interface<br/>evaluate(schedule) → Result"]
   ENV --> B1["ISL backend (done)<br/>islpy legality + clang exec"]
-  ENV -.planned.-> B2["Tiramisu backend (building)<br/>exact repro: polyhedral legality + Halide codegen"]
+  ENV -.-> B2["Tiramisu backend (built)<br/>real libtiramisu legality, cross-validated 4/4"]
 ```
 
 ---
 
-## Install
+## Documentation
 
+**What ComPilot does.** An LLM is given a loop nest and its baseline runtime, then proposes a *schedule* (a sequence of loop transformations) inside `<schedule>…</schedule>` tags. The environment checks the schedule and returns one of five outcomes; the LLM uses that feedback to refine its next proposal. It keeps the best legal speedup and stops on a stop-token or an iteration cap. No fine-tuning — the intelligence is an off-the-shelf model; correctness comes from the compiler.
+
+**How a proposal is evaluated** (`backend_isl.Environment.evaluate`):
+1. **Parse** the schedule (`schedule.py`) into the 9-primitive DSL.
+2. **Build θ′** (`scheduler.py`) — the new schedule as an ISL map from each iteration to its new logical time vector.
+3. **Prove legality** (`polyhedral.py`): compute all memory dependences `D` (RAW/WAR/WAW, ordered by the original schedule); the schedule is legal iff every dependence stays lexicographically forward under θ′, i.e. `∀ (i→i′) ∈ D : θ′(i) ≺ₗₑₓ θ′(i′)`. A loop level is parallelizable iff no dependence is *carried* at that level.
+4. **Measure** (`codegen.py` + `runner.py`): if legal, emit C, compile with `clang -O3 + OpenMP`, run, and report `baseline_time / new_time`. The output checksum is cross-checked against the baseline — a second, independent correctness guard.
+
+**Feedback categories** (`feedback.py`): `success` (with speedup) · `illegal` (dependence violation) · `parallel_illegal` (loop carries a dependence) · `invalid` (unparseable) · `compile/runtime_error`.
+
+**Legality backends.** `backend_isl` uses ISL directly (the same library Tiramisu wraps). `backends/tiramisu.py` drives the **real Tiramisu compiler** we built; the two agree 4/4 on directly-comparable transforms (see [Test results](#test-results)). `polyhedral_multi.py` extends legality to multiple statements (2d+1 schedules), the gate for `fuse`/`shift` and multi-statement kernels.
+
+**Secrets.** The Gemini key is fetched from **OpenBao** at runtime (`secrets.py`) — never written to disk or printed.
+
+## Building (step by step)
+
+**1. Prerequisites** — Python 3.10+, a C compiler with OpenMP, Node (only to validate the README's mermaid).
 ```bash
-pip install -r requirements.txt          # islpy, certifi
-brew install libomp                       # OpenMP for clang on macOS
-# LLM key: set GEMINI_API_KEY, or store it in OpenBao at secrets/google (field api_key)
+brew install libomp        # OpenMP for clang (macOS)
 ```
 
-## Usage
+**2. Clone + Python deps**
+```bash
+git clone https://github.com/cluster2600/cluster_compilot.git
+cd cluster_compilot
+pip install -r requirements.txt        # islpy, certifi
+```
+
+**3. LLM key (for live runs)** — either set an env var, or store it in OpenBao:
+```bash
+export GEMINI_API_KEY=...               # option A
+# option B: OpenBao at secrets/google, field api_key (auto-read, must be unsealed)
+```
+
+**4. Smoke test** (no key needed)
+```bash
+python3 -m tests.test_legality          # expect: 10/10
+python3 run_agent.py --mock             # full loop, scripted
+```
+
+**5. (Optional) Build the exact Tiramisu backend** — only if you want real-compiler parity. This builds LLVM 14 + Halide + ISL + libtiramisu from source (long, ~GBs):
+```bash
+cd third_party
+git clone --recursive https://github.com/Tiramisu-Compiler/tiramisu.git
+cd tiramisu && git checkout 041afad
+git submodule update --init --recursive
+./utils/scripts/install_submodules.sh "$PWD"      # LLVM/Halide/ISL (use `ninja -k 0` if aux tools fail)
+cmake --install 3rdParty/Halide/build --prefix "$PWD/3rdParty/Halide/install"
+# then configure libtiramisu with: -DHalide_DIR=<install>/lib/cmake/Halide
+#   -DCMAKE_PREFIX_PATH=<install> -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DUSE_MPI=FALSE
+make -j tiramisu
+python3 -m tests.test_tiramisu_parity             # expect: 4/4
+```
+
+## User guide (step by step)
 
 ```bash
-python3 -m tests.test_legality            # prove the legality oracle (10/10)
-python3 -m tests.test_environment         # legality + real measured speedup on GEMM
-python3 run_agent.py --mock               # full agent loop, scripted, no API key
-python3 run_agent.py --iters 15           # live Gemini (key from env or OpenBao)
-python3 run_agent.py --k 5 --iters 20     # best-of-5
+# 1. Run the full agent loop without a key (scripted driver)
+python3 run_agent.py --mock
+
+# 2. Run live on GEMM (key from env or OpenBao)
+python3 run_agent.py --iters 15
+
+# 3. Choose a kernel and use best-of-K
+python3 run_agent.py --kernel syrk --k 5 --iters 20
+
+# 4. Evaluate across all kernels (per-kernel + geometric mean)
+python3 eval.py --mock                     # deterministic
+python3 eval.py --kernels gemm,syrk --k 3  # live Gemini, best-of-3
+
+# 5. Run the test suite
+python3 -m tests.test_legality
+python3 -m tests.test_environment
+python3 -m tests.test_multistatement
+python3 -m tests.test_tiramisu_parity      # needs the Tiramisu build (step 5 above)
 ```
+
+**Add your own kernel** — pair an execution spec (`Kernel`) with a polyhedral spec (`PolyKernel`) in `compilot/kernels.py` and register it in `REGISTRY`. The agent, eval, and legality engine pick it up by name. See `GEMM` / `GEMM_POLY` as the template.
+
+## Test results
+
+All suites pass. Captured on a multi-core macOS / Apple-Silicon machine (speedups are machine-dependent; legality verdicts are not).
+
+**Unit / integration tests**
+
+| Suite | Result |
+|---|---|
+| `test_legality` — ISL oracle distinguishes legal vs illegal | **10/10** (accepts interchange/tile/skew; rejects `reverse(k)`; flags `parallel(k)`) |
+| `test_environment` — legality + real measured speedup on GEMM | baseline ≈0.17 s; `reorder(i,k,j)` **7.6×**; `tile2d+parallel` **14.2×**; `reverse(k)`→illegal; `parallel(k)`→parallel_illegal |
+| `test_multistatement` — producer→consumer legality | **3/3** (fused legal, distributed legal, reordered illegal) |
+| `test_tiramisu_parity` — ISL vs the **real Tiramisu compiler** | **4/4 agree** (interchange, `reverse(k)`=illegal, `reverse(i)`, tile2d) |
+
+**Benchmark** — one strong, legal schedule per kernel (deterministic; `clang -O3 + OpenMP`):
+
+| Kernel | Baseline | Speedup | Schedule |
+|---|---|---|---|
+| gemm | 0.17 s | **26.5×** | `reorder(i,k,j)` + `tile2d(64,64)` + `parallel(i_t)` |
+| syrk | 0.10 s | **5.3×** | `tile2d(64,64)` + `parallel(i_t)` |
+| syr2k | 0.11 s | **4.9×** | `tile2d(64,64)` + `parallel(i_t)` |
+| floydwarshall | 0.07 s | **0.99×** | `tile2d(64,64)` — *cannot* parallelize under sound legality |
+| **geomean** | | **5.1×** | |
+
+Floyd-Warshall at ~1× is the honest, *correct* result: row/column `k` is written and read across iterations, so sound polyhedral analysis forbids parallelizing `i`/`j` (only the non-negative-diagonal *semantics* would allow it — which a syntactic checker cannot assume). Live Gemini reaches **42× on GEMM** and a **13× geomean** when it tailors schedules per kernel.
 
 ## Repo layout
 
