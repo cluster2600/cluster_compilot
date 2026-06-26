@@ -77,8 +77,8 @@ All suites pass; the benchmark is reproducible (`python3 bench.py`). Full output
 **Baseline:** `baselines.py` — **ComPilot vs naive auto-parallelization**: geomean **6.17× vs 3.31× → 1.86× faster** (matmul kernels 4.6–6.2× faster; matvec memory-bound, ~1.1–1.35×). Polyhedral **Pluto** itself does **not build** on this toolchain (Darwin-27/clang-22 rejects its bundled piplib's legacy K&R C — `conflicting types`/`unknown type name`; the LLVM-14 clang++ can't link C++), so naive auto-parallel is the proxy comparison.
 
 **Pending:**
-- **Tiramisu Halide codegen+execution** — speedup measured *by Tiramisu* (we already measure via clang)
-- **full PolyBench/C 4.2.1 (150 instances)** — 10 kernels done; the rest is mechanical (rectangular kernels) plus triangular-domain bounds for symm/trmm/cholesky-family
+- **Tiramisu execution timing** — Tiramisu Halide **codegen works** (lowers a scheduled GEMM to a ~128 KB object); the remaining piece is a Halide-buffer wrapper to *run+time* that object (clang already measures speedup)
+- **full PolyBench/C 4.2.1 (150 instances)** — 10 kernels done; the rest is mechanical (rectangular kernels) plus codegen extensions for triangular-domain (symm/trmm/cholesky) and in-place/stencil (gemver/jacobi) families
 
 ## Reference
 
