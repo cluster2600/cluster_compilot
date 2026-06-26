@@ -22,6 +22,7 @@ class Kernel:
     body: str
     output: str
     reduction: set = field(default_factory=set)
+    reset: str = "zero"      # per-rep reset of `output`: "zero" or "reinit" (in-place kernels)
 
 
 # ---- GEMM : C = A * B -----------------------------------------------------
@@ -65,9 +66,27 @@ SYR2K_POLY = PolyKernel(
     params=["N", "K"], sizes={"N": 512, "K": 512},
 )
 
+# ---- FLOYD-WARSHALL : in-place, k MUST stay outermost ---------------------
+# Showcases the legality engine: any reorder moving k inward, or parallel(k),
+# is illegal (D[i][j] at step k depends on D[i][k]/D[k][j] from the same k).
+FLOYD = Kernel(
+    name="floydwarshall", sizes={"N": 512},
+    arrays={"D": ("N", "N")},
+    loops=[("k", "N"), ("i", "N"), ("j", "N")],
+    body="D[i*N + j] = MIN(D[i*N + j], D[i*N + k] + D[k*N + j]);",
+    output="D", reduction={"k"}, reset="reinit",
+)
+FLOYD_POLY = PolyKernel(
+    name="floydwarshall", order=["k", "i", "j"],
+    domain="0<=k<N and 0<=i<N and 0<=j<N",
+    writes=[("D", "i,j")], reads=[("D", "i,j"), ("D", "i,k"), ("D", "k,j")],
+    params=["N"], sizes={"N": 512},
+)
+
 REGISTRY = {
     "gemm": (GEMM, GEMM_POLY),
     "syrk": (SYRK, SYRK_POLY),
     "syr2k": (SYR2K, SYR2K_POLY),
+    "floydwarshall": (FLOYD, FLOYD_POLY),
 }
 KERNELS = {name: ek for name, (ek, _) in REGISTRY.items()}
