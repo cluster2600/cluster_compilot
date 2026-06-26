@@ -11,6 +11,7 @@ from compilot.stencil import StencilEnvironment
 CASES = {
     "jacobi1d": ["parallel(i)", "parallel(i)"],
     "jacobi2d": ["tile2d(i,j,64,64)\nparallel(i_t)", "tile2d(i,j,64,64)\nparallel(i_t)"],
+    "seidel2d": ["skew(j,i,1)"],   # jacobi parallelizes; seidel needs skewing
 }
 
 if __name__ == "__main__":
@@ -22,4 +23,10 @@ if __name__ == "__main__":
         print(f"[{'OK ' if ok else 'FAIL'}] {name:10} baseline={env.baseline()['time']:.4f}s "
               f"[{r['status']:10}] {sp}")
         assert ok, f"{name}: {r['status']}"
-    print("\nStencil time-loop kernels validated (jacobi-1d, jacobi-2d).")
+    # seidel carries spatial dependences: naive parallelism must be rejected
+    se = StencilEnvironment(STENCIL_REGISTRY["seidel2d"]())
+    for bad in (["parallel(i)"], ["parallel(j)"]):
+        st = se.evaluate(bad)["status"]
+        print(f"        seidel2d {bad[0]} -> [{st}]")
+        assert st == "parallel_illegal", f"seidel {bad}: {st}"
+    print("\nStencils validated: jacobi-1d/2d parallel; seidel-2d needs skewing (parallel rejected).")

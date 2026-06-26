@@ -297,4 +297,20 @@ def _jacobi2d():
                          [s0, s1], reset={"A": "reinit", "B": "reinit"}, final="A")
 
 
-STENCIL_REGISTRY = {"jacobi1d": _jacobi1d, "jacobi2d": _jacobi2d}
+def _seidel2d():
+    """In-place 9-point Gauss-Seidel: A[i][j] reads already-updated A[i-1]/A[i][j-1],
+    so i and j BOTH carry dependences -> naive parallelism is illegal (skewing needed)."""
+    from .stencil import SStmt, StencilKernel
+    N, T = 1000, 40
+    body = ("A[i*N+j] = (A[(i-1)*N+j-1]+A[(i-1)*N+j]+A[(i-1)*N+j+1]"
+            "+A[i*N+j-1]+A[i*N+j]+A[i*N+j+1]"
+            "+A[(i+1)*N+j-1]+A[(i+1)*N+j]+A[(i+1)*N+j+1])/9.0;")
+    s = SStmt([("i", "1", "N-1"), ("j", "1", "N-1")], body,
+              PolyKernel("A", ["i", "j"], "1<=i<N-1 and 1<=j<N-1", [("A", "i,j")],
+                         [("A", "i-1,j"), ("A", "i,j-1"), ("A", "i+1,j"), ("A", "i,j+1"), ("A", "i,j")],
+                         ["N"]))
+    return StencilKernel("seidel2d", {"N": N, "TSTEPS": T}, {"A": ("N", "N")},
+                         [s], reset={"A": "reinit"}, final="A")
+
+
+STENCIL_REGISTRY = {"jacobi1d": _jacobi1d, "jacobi2d": _jacobi2d, "seidel2d": _seidel2d}
