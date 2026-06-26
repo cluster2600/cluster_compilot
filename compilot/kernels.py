@@ -83,10 +83,38 @@ FLOYD_POLY = PolyKernel(
     params=["N"], sizes={"N": 512},
 )
 
+# ---- real PolyBench triangular variants (j <= i lower triangle) -----------
+SYRK_TRI = Kernel(
+    name="syrk_tri", sizes={"N": 512, "K": 512},
+    arrays={"A": ("N", "K"), "C": ("N", "N")},
+    loops=[("i", "N"), ("j", "i+1"), ("k", "K")],
+    body="C[i*N + j] += A[i*K + k] * A[j*K + k];", output="C", reduction={"k"},
+)
+SYRK_TRI_POLY = PolyKernel(
+    name="syrk_tri", order=["i", "j", "k"], domain="0<=i<N and 0<=j<=i and 0<=k<K",
+    writes=[("C", "i,j")], reads=[("A", "i,k"), ("A", "j,k"), ("C", "i,j")],
+    params=["N", "K"], sizes={"N": 512, "K": 512},
+)
+SYR2K_TRI = Kernel(
+    name="syr2k_tri", sizes={"N": 512, "K": 512},
+    arrays={"A": ("N", "K"), "B": ("N", "K"), "C": ("N", "N")},
+    loops=[("i", "N"), ("j", "i+1"), ("k", "K")],
+    body="C[i*N + j] += A[i*K + k] * B[j*K + k] + B[i*K + k] * A[j*K + k];",
+    output="C", reduction={"k"},
+)
+SYR2K_TRI_POLY = PolyKernel(
+    name="syr2k_tri", order=["i", "j", "k"], domain="0<=i<N and 0<=j<=i and 0<=k<K",
+    writes=[("C", "i,j")],
+    reads=[("A", "i,k"), ("B", "j,k"), ("B", "i,k"), ("A", "j,k"), ("C", "i,j")],
+    params=["N", "K"], sizes={"N": 512, "K": 512},
+)
+
 REGISTRY = {
     "gemm": (GEMM, GEMM_POLY),
     "syrk": (SYRK, SYRK_POLY),
     "syr2k": (SYR2K, SYR2K_POLY),
+    "syrk_tri": (SYRK_TRI, SYRK_TRI_POLY),
+    "syr2k_tri": (SYR2K_TRI, SYR2K_TRI_POLY),
     "floydwarshall": (FLOYD, FLOYD_POLY),
 }
 KERNELS = {name: ek for name, (ek, _) in REGISTRY.items()}

@@ -14,6 +14,8 @@ SINGLE = {
     "gemm":  "reorder(i, k, j)\ntile2d(i, j, 64, 64)\nparallel(i_t)",
     "syrk":  "tile2d(i, j, 64, 64)\nparallel(i_t)",
     "syr2k": "tile2d(i, j, 64, 64)\nparallel(i_t)",
+    "syrk_tri":  "tile2d(i, j, 32, 32)\nparallel(i_t)",
+    "syr2k_tri": "tile2d(i, j, 32, 32)\nparallel(i_t)",
     "floydwarshall": "tile2d(i, j, 64, 64)",
 }
 # multi-statement schedules (one per statement; parallelize a non-reduction outer loop)
