@@ -121,8 +121,14 @@ python3 run_agent.py --k 5 --iters 20     # best-of-5
 | `compilot/llm.py` | Gemini REST client + mock driver |
 | `compilot/secrets.py` | fetch key from OpenBao at runtime |
 | `compilot/agent.py` | dialogue loop + best-of-K |
-| `tests/` | legality + end-to-end environment tests |
-| `third_party/tiramisu/` | exact Tiramisu backend (building) |
+| `compilot/polyhedral_multi.py` | **multi-statement** legality (N statements, 2d+1 schedule) |
+| `compilot/backends/tiramisu.py` | drive the **real** libtiramisu legality (exact backend) |
+| `eval.py` | run the agent across kernels → per-kernel + **geomean** |
+| `run_agent.py` | run the agent on one kernel (`--mock` / live / `--k`) |
+| `tests/` | legality (10/10), environment, **Tiramisu parity (4/4)**, multi-statement (3/3) |
+| `third_party/tiramisu/` | exact Tiramisu backend — **built** (`libtiramisu.dylib`); gitignored |
+
+**Kernels:** `gemm` (C=A·B), `syrk` (C=A·Aᵀ), `syr2k` (C=A·Bᵀ+B·Aᵀ), `floydwarshall` (sound-legality showcase).
 
 ## The 9-primitive schedule DSL
 
@@ -136,11 +142,17 @@ Legality is checked for all nine; execution currently covers the first seven (sk
 
 ## Status & roadmap
 
-**Working & live:** ISL legality oracle (10/10), 9-primitive DSL, clang execution, full agent dialogue (prompt/parser/feedback/history/stop/best-of-K), Gemini via OpenBao, **42× on GEMM end-to-end**.
+**Working & live:**
+- ISL legality oracle (10/10) + parallelism check; 9-primitive DSL; clang/OpenMP execution
+- Full agent dialogue (prompt/parser/5-category feedback/ICL history/stop/best-of-K), Gemini via OpenBao
+- **Live: 42× on GEMM; eval geomean 13.07×** across kernels (gemm 34.6× / syrk 4.9×)
+- 4 kernels + `reverse` codegen + in-place reset
+- **Exact Tiramisu backend BUILT** (`libtiramisu.dylib` @ `041afad`) and driven from `backends/tiramisu.py`; ISL ↔ real-Tiramisu legality agrees **4/4**
+- **Multi-statement polyhedral model** (3/3) — gate for fuse/shift + multi-statement kernels
 
 **Pending:**
-- **A. Exact Tiramisu backend** — LLVM libs+Clang built; build Halide → `libtiramisu` → `backends/tiramisu.py`.
-- **B. Scale** — skew/reverse/fuse/shift codegen; full PolyBench/C 4.2.1 (30 kernels × 5 sizes = 150 instances); multi-statement polyhedral model; eval harness (geomean, bootstrap 95% CIs, ComPilot@T / ComPilot_K@T, Pluto baseline); token/cost reporting (RQ2).
+- **A.** codegen+execution via Tiramisu's Halide path (speedup from Tiramisu; clang already measures it)
+- **B.** wire `fuse`/`shift` + multi-statement codegen → add 2mm/gemver/atax/bicg → full PolyBench/C 4.2.1 (150 instances); `skew` codegen; Pluto baseline; bootstrap 95% CIs; ComPilot@T / ComPilot_K@T; token/cost (RQ2)
 
 ## Reference
 
