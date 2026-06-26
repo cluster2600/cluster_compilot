@@ -5,19 +5,10 @@ GEMM accumulates into C[i,j] across k, so the k loop carries a dependence:
   - reversing k or parallelizing k is ILLEGAL  (the oracle must catch this)
 Run: python3 -m tests.test_legality
 """
-from compilot.polyhedral import PolyKernel, dependences, is_legal, is_parallel
+from compilot.polyhedral import dependences, is_legal, is_parallel
 from compilot import schedule as sched
 from compilot.scheduler import build_theta
-
-GEMM = PolyKernel(
-    name="gemm",
-    order=["i", "j", "k"],
-    domain="0<=i<N and 0<=j<M and 0<=k<K",
-    writes=[("C", "i,j")],
-    reads=[("A", "i,k"), ("B", "k,j"), ("C", "i,j")],
-    params=["N", "M", "K"],
-    sizes={"N": 1024, "M": 1024, "K": 1024},
-)
+from compilot.kernels import GEMM_POLY as GEMM
 
 
 def legal(schedule_text):

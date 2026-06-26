@@ -19,6 +19,7 @@ class Level:
     hi: str
     step: str = "1"
     pragmas: list = field(default_factory=list)
+    rev: bool = False
 
 
 def _build_levels(kernel, ops):
@@ -58,6 +59,8 @@ def _build_levels(kernel, ops):
             levels[find(args[0])].pragmas.append("#pragma omp parallel for")
         elif op == "unroll":
             levels[find(args[0])].pragmas.append(f"#pragma clang loop unroll_count({args[1]})")
+        elif op == "reverse":
+            levels[find(args[0])].rev = True
         else:
             raise ValueError(f"codegen cannot emit {op!r} yet")
     return levels
@@ -68,7 +71,10 @@ def _emit_nest(kernel, levels, indent="    "):
     for lv in levels:
         for p in lv.pragmas:
             out.append(pad + p)
-        out.append(pad + f"for (int {lv.var} = {lv.lo}; {lv.var} < {lv.hi}; {lv.var} += {lv.step}) {{")
+        if lv.rev:
+            out.append(pad + f"for (int {lv.var} = ({lv.hi}) - 1; {lv.var} >= ({lv.lo}); {lv.var} -= {lv.step}) {{")
+        else:
+            out.append(pad + f"for (int {lv.var} = {lv.lo}; {lv.var} < {lv.hi}; {lv.var} += {lv.step}) {{")
         pad += "    "
     out.append(pad + kernel.body)
     for _ in levels:

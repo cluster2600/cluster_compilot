@@ -4,11 +4,9 @@ Proves the agent's environment works without any LLM: legal schedules compile,
 run, and report a real speedup; illegal ones are rejected before execution.
 Run: python3 -m tests.test_environment
 """
-from compilot.kernels import GEMM
-from compilot.backend_isl import Environment
-from tests.test_legality import GEMM as GEMM_POLY
+from compilot.backend_isl import environment
 
-env = Environment(GEMM, GEMM_POLY)
+env = environment("gemm")
 
 CASES = [
     ("baseline (identity)",        ""),

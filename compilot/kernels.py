@@ -1,35 +1,73 @@
-"""PolyBench-style kernels expressed as schedulable affine loop nests.
+"""Kernels as schedulable affine loop nests.
 
-A kernel is a perfectly-nested loop body over flat (1-D malloc'd) arrays plus
-the metadata the codegen/agent needs: loop variables, their bounds, the body
-statement, and which loops carry a dependence (informational — legality is
-enforced empirically by the correctness check, not by this field).
+Each kernel has two paired specs:
+  - Kernel      : execution spec (flat arrays, body, sizes) used by codegen
+  - PolyKernel  : polyhedral spec (domain, reads, writes, loop order) used by ISL legality
+
+REGISTRY pairs them by name so the Environment can take a single kernel name.
+These are single-statement kernels (output zeroed, then an accumulation nest):
+GEMM (C=A·B), SYRK (C=A·Aᵀ), SYR2K (C=A·Bᵀ+B·Aᵀ). Multi-statement PolyBench
+kernels arrive with the multi-statement polyhedral model.
 """
 from dataclasses import dataclass, field
+from .polyhedral import PolyKernel
 
 
 @dataclass
 class Kernel:
     name: str
-    sizes: dict           # {"N": 1024, ...}  bound name -> int
-    arrays: dict          # {"A": ("N", "K"), ...}  name -> (dim, dim) row-major
-    loops: list           # [("i", "N"), ("j", "M"), ("k", "K")]  (var, bound)
-    body: str             # innermost statement, uses loop vars + flat indexing
-    output: str           # name of the array zeroed before the nest
-    reduction: set = field(default_factory=set)  # loops carrying a dependence
+    sizes: dict
+    arrays: dict
+    loops: list
+    body: str
+    output: str
+    reduction: set = field(default_factory=set)
 
 
-# C = A * B  (plain matmul). C is zeroed first, so the i/j/k accumulation nest
-# is fully permutable + tileable; only parallelizing the reduction loop k is
-# illegal — and the checksum gate catches exactly that.
+# ---- GEMM : C = A * B -----------------------------------------------------
 GEMM = Kernel(
-    name="gemm",
-    sizes={"N": 512, "M": 512, "K": 512},
+    name="gemm", sizes={"N": 512, "M": 512, "K": 512},
     arrays={"A": ("N", "K"), "B": ("K", "M"), "C": ("N", "M")},
     loops=[("i", "N"), ("j", "M"), ("k", "K")],
-    body="C[i*M + j] += A[i*K + k] * B[k*M + j];",
-    output="C",
-    reduction={"k"},
+    body="C[i*M + j] += A[i*K + k] * B[k*M + j];", output="C", reduction={"k"},
+)
+GEMM_POLY = PolyKernel(
+    name="gemm", order=["i", "j", "k"], domain="0<=i<N and 0<=j<M and 0<=k<K",
+    writes=[("C", "i,j")], reads=[("A", "i,k"), ("B", "k,j"), ("C", "i,j")],
+    params=["N", "M", "K"], sizes={"N": 512, "M": 512, "K": 512},
 )
 
-KERNELS = {k.name: k for k in (GEMM,)}
+# ---- SYRK : C = A * A^T  (full, rectangular) ------------------------------
+SYRK = Kernel(
+    name="syrk", sizes={"N": 512, "K": 512},
+    arrays={"A": ("N", "K"), "C": ("N", "N")},
+    loops=[("i", "N"), ("j", "N"), ("k", "K")],
+    body="C[i*N + j] += A[i*K + k] * A[j*K + k];", output="C", reduction={"k"},
+)
+SYRK_POLY = PolyKernel(
+    name="syrk", order=["i", "j", "k"], domain="0<=i<N and 0<=j<N and 0<=k<K",
+    writes=[("C", "i,j")], reads=[("A", "i,k"), ("A", "j,k"), ("C", "i,j")],
+    params=["N", "K"], sizes={"N": 512, "K": 512},
+)
+
+# ---- SYR2K : C = A * B^T + B * A^T  (full) --------------------------------
+SYR2K = Kernel(
+    name="syr2k", sizes={"N": 512, "K": 512},
+    arrays={"A": ("N", "K"), "B": ("N", "K"), "C": ("N", "N")},
+    loops=[("i", "N"), ("j", "N"), ("k", "K")],
+    body="C[i*N + j] += A[i*K + k] * B[j*K + k] + B[i*K + k] * A[j*K + k];",
+    output="C", reduction={"k"},
+)
+SYR2K_POLY = PolyKernel(
+    name="syr2k", order=["i", "j", "k"], domain="0<=i<N and 0<=j<N and 0<=k<K",
+    writes=[("C", "i,j")],
+    reads=[("A", "i,k"), ("B", "j,k"), ("B", "i,k"), ("A", "j,k"), ("C", "i,j")],
+    params=["N", "K"], sizes={"N": 512, "K": 512},
+)
+
+REGISTRY = {
+    "gemm": (GEMM, GEMM_POLY),
+    "syrk": (SYRK, SYRK_POLY),
+    "syr2k": (SYR2K, SYR2K_POLY),
+}
+KERNELS = {name: ek for name, (ek, _) in REGISTRY.items()}

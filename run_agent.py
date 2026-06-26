@@ -6,24 +6,23 @@
 """
 import argparse
 
-from compilot.kernels import GEMM
-from compilot.backend_isl import Environment
+from compilot.backend_isl import environment
 from compilot.agent import run_dialogue, best_of_k
 from compilot.llm import GeminiClient, MockClient
-from tests.test_legality import GEMM as GEMM_POLY
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mock", action="store_true")
+    ap.add_argument("--kernel", default="gemm")
     ap.add_argument("--iters", type=int, default=20)
     ap.add_argument("--k", type=int, default=1)
     ap.add_argument("--model", default="gemini-2.5-flash")
     args = ap.parse_args()
 
-    env = Environment(GEMM, GEMM_POLY)
+    env = environment(args.kernel)
     make = (lambda: MockClient()) if args.mock else (lambda: GeminiClient(model=args.model))
-    print(f"kernel=gemm  baseline={env.baseline()['time']:.4f}s  "
+    print(f"kernel={args.kernel}  baseline={env.baseline()['time']:.4f}s  "
           f"driver={'mock' if args.mock else args.model}  K={args.k} iters={args.iters}\n")
 
     if args.k > 1:
