@@ -104,7 +104,7 @@ def _emit_nest(kernel, levels, indent="    "):
 
 def render_nest(kernel):
     """Human-readable view of the original loop nest (for presenting to the LLM)."""
-    levels = [Level(v, "0", b) for v, b in kernel.loops]
+    levels = [Level(*_loop_lohi(e)) for e in kernel.loops]
     return _emit_nest(kernel, levels, indent="")
 
 

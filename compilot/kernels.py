@@ -109,6 +109,27 @@ SYR2K_TRI_POLY = PolyKernel(
     params=["N", "K"], sizes={"N": 512, "K": 512},
 )
 
+# ---- MONTE CARLO equity-curve simulation (from ELVIS robustness testing) ---
+# M independent simulated equity curves of T trades each. The trade loop is a
+# sequential recurrence (equity[s][t] = equity[s][t-1] * (1 + return)); the
+# simulation loop is fully independent. So parallel(s) is LEGAL (near-linear
+# speedup across cores) and parallel(t) is correctly REJECTED (loop-carried).
+# This is the one computation in ELVIS with a real, legal ComPilot win: today it
+# runs as a joblib process pool over num_simulations; here it's a single nest the
+# agent can tile/parallelize and we measure clang+OpenMP wall-clock against it.
+MONTECARLO = Kernel(
+    name="montecarlo", sizes={"M": 16384, "T": 1024},
+    arrays={"ret": ("M", "T"), "equity": ("M", "T")},
+    loops=[("s", "M"), ("t", "1", "T")],
+    body="equity[s*T + t] = equity[s*T + (t-1)] * (1.0 + 0.01 * (ret[s*T + t] - 0.5));",
+    output="equity", reset="reinit",
+)
+MONTECARLO_POLY = PolyKernel(
+    name="montecarlo", order=["s", "t"], domain="0<=s<M and 1<=t<T",
+    writes=[("equity", "s,t")], reads=[("equity", "s,t-1"), ("ret", "s,t")],
+    params=["M", "T"], sizes={"M": 16384, "T": 1024},
+)
+
 REGISTRY = {
     "gemm": (GEMM, GEMM_POLY),
     "syrk": (SYRK, SYRK_POLY),
@@ -116,6 +137,7 @@ REGISTRY = {
     "syrk_tri": (SYRK_TRI, SYRK_TRI_POLY),
     "syr2k_tri": (SYR2K_TRI, SYR2K_TRI_POLY),
     "floydwarshall": (FLOYD, FLOYD_POLY),
+    "montecarlo": (MONTECARLO, MONTECARLO_POLY),
 }
 KERNELS = {name: ek for name, (ek, _) in REGISTRY.items()}
 
