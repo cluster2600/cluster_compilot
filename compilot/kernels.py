@@ -130,8 +130,29 @@ MONTECARLO_POLY = PolyKernel(
     params=["M", "T"], sizes={"M": 16384, "T": 1024},
 )
 
+# ---- DISTANCE MATRIX : zvec pairwise squared-Euclidean (alibaba/zvec) -------
+# out[i][j] = sum_k (m[i][k] - q[j][k])^2  over M query x N database vectors of
+# dim K. This is zvec's euclidean_distance_matrix.h hot loop (the one they
+# hand-tune with AVX512). Compute-bound (M*N*K mul-adds), so unlike montecarlo
+# it tiles for cache and parallelizes for a real, non-bandwidth-capped win.
+# Same dependence shape as SYRK: parallel(i)/parallel(j) legal, parallel(k)
+# (the reduction) is correctly rejected.
+DISTMATRIX = Kernel(
+    name="distmatrix", sizes={"M": 1024, "N": 1024, "K": 128},
+    arrays={"m": ("M", "K"), "q": ("N", "K"), "out": ("M", "N")},
+    loops=[("i", "M"), ("j", "N"), ("k", "K")],
+    body="out[i*N + j] += (m[i*K + k] - q[j*K + k]) * (m[i*K + k] - q[j*K + k]);",
+    output="out", reduction={"k"},
+)
+DISTMATRIX_POLY = PolyKernel(
+    name="distmatrix", order=["i", "j", "k"], domain="0<=i<M and 0<=j<N and 0<=k<K",
+    writes=[("out", "i,j")], reads=[("m", "i,k"), ("q", "j,k"), ("out", "i,j")],
+    params=["M", "N", "K"], sizes={"M": 1024, "N": 1024, "K": 128},
+)
+
 REGISTRY = {
     "gemm": (GEMM, GEMM_POLY),
+    "distmatrix": (DISTMATRIX, DISTMATRIX_POLY),
     "syrk": (SYRK, SYRK_POLY),
     "syr2k": (SYR2K, SYR2K_POLY),
     "syrk_tri": (SYRK_TRI, SYRK_TRI_POLY),
