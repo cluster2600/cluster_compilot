@@ -1,0 +1,10 @@
+.git
+.venv*/
+dist/
+build/
+*.egg-info/
+__pycache__/
+*.pyc
+third_party/
+npm/
+docs/
