@@ -79,6 +79,21 @@ def multi_candidate_hint(n):
     )
 
 
+def moa_aggregator_hint(proposals, n):
+    """Per-turn guidance for the Mixture-of-Agents aggregator: the reference agents'
+    raw schedule proposals this turn, to synthesize/improve on."""
+    uniq = [p for p in dict.fromkeys(p.strip() for p in proposals) if p]
+    if uniq:
+        listed = "\n\n".join(f"[candidate {i + 1}]\n{p}" for i, p in enumerate(uniq))
+        head = f"Other optimization agents proposed these schedules this turn:\n\n{listed}\n\n"
+    else:
+        head = "The other agents proposed no parseable schedule this turn.\n\n"
+    return (head + f"As the aggregator, synthesize the best ideas and propose up to {n} strong "
+            f"candidate schedules of your own, each in its OWN <schedule> block — you may reuse, "
+            f"combine, or improve on the above. Every candidate (yours and theirs) is compiled "
+            f"and measured in parallel, so explore complementary strategies.")
+
+
 def kernel_message_multi(menv):
     from .multikernel import _Kernelish
     n = len(menv.mk.statements)

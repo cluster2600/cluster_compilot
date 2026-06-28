@@ -36,6 +36,10 @@ python3 -m tests.test_parallel_safety  # parallel evaluate() == serial verdicts
 python3 run_agent.py --mock            # full agent loop, no API key
 python3 run_agent.py --iters 15        # live Gemini (key from env or OpenBao)
 python3 run_agent.py --k 5 --candidates 4   # parallel best-of-5, 4 candidate schedules/turn
+python3 run_agent.py --backend local --base-url http://localhost:11434/v1 \
+        --model qwen2.5-coder:32b           # any OpenAI-compatible server (Ollama/vLLM/NIM/LM Studio)
+python3 run_agent.py --moa "gemini:gemini-2.5-flash,local:qwen2.5-coder:32b" \
+        --aggregator gemini:gemini-2.5-pro  # Mixture of Agents (pool & measure)
 ```
 
 ### Parallelism (Python 3.14)
@@ -49,6 +53,19 @@ This scales on the **standard** interpreter because the heavy work releases the 
 
 - **legality lock** (`backend_isl._ISL_LOCK`) — islpy builds objects in a process-global, non-thread-safe ISL context, so the (fast) `build_theta`/`is_legal`/`is_parallel` section is serialized; compile/run stays outside it.
 - **measurement lock** (`runner._RUN_LOCK`) — only one *timed* binary executes at a time. Concurrent benchmark processes would contend for cores/caches and bias the very wall-clock speedup being optimized; compiles and LLM calls still overlap, so the search is parallel while the numbers stay trustworthy.
+
+### Mixture of Agents (`--moa`) + local models
+
+A third fan-out axis, in the spirit of [Hermes' Mixture of Agents](https://hermes-agent.nousresearch.com/docs/user-guide/features/mixture-of-agents): each turn, several **reference** models propose schedules in parallel and an **aggregator** model synthesizes its own informed by theirs. Unlike Hermes — which has no ground-truth evaluator and lets the aggregator pick — ComPilot is **pool & measure**: every proposal (references' and aggregator's) is deduped, compiled, and **measured** by the real oracle in parallel, and the best measured speedup wins. Diverse proposers, objective selection.
+
+```bash
+python3 run_agent.py --moa "gemini:gemini-2.5-flash,local:qwen2.5-coder:32b" \
+        --aggregator gemini:gemini-2.5-pro --candidates 2
+```
+
+Each model is a `backend:model` spec (`gemini:…`, `local:…`, `mock`; split on the first `:`, so Ollama tags like `qwen2.5-coder:32b` survive). References run hotter (0.9) for diversity, the aggregator cooler (0.4). MoA covers single-statement kernels; multi-statement kernels use the standard dialogue.
+
+**Local models** use one OpenAI-compatible client (`compilot/llm.OpenAIClient`) against `/v1/chat/completions` — Ollama (`…/v1`), vLLM, NVIDIA NIM, LM Studio, llama.cpp. Point `--backend local --base-url` at the server, or mix providers per-agent via `--moa` specs. `OPENAI_API_KEY` is sent as a bearer token when set (unused by Ollama).
 
 See the [building guide](docs/building.md) and [user guide](docs/user-guide.md) for everything else (live keys, Tiramisu build, adding kernels).
 

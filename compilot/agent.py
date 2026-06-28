@@ -97,6 +97,66 @@ def _run_dialogue_candidates(env, llm, max_iters, verbose, n, tag):
     return best_sp, best_sched, trace
 
 
+def run_dialogue_moa(env, references, aggregator, max_iters=30, verbose=True,
+                     candidates_per_turn=2, max_candidates=8, tag=""):
+    """Mixture-of-Agents dialogue (pool & measure), Hermes-style two-tier proposing.
+
+    Each turn: every *reference* model proposes schedules in parallel (advisory),
+    the *aggregator* model then synthesizes its own proposals informed by theirs,
+    and ALL pooled+deduped candidates are compiled and measured by the ground-truth
+    oracle in parallel. The best measured speedup wins; the measured results feed
+    back to every agent next turn. The aggregator's turn is the canonical transcript
+    entry (references are re-run fresh each turn, like Hermes references).
+
+    references: list of LLM clients (proposers). aggregator: one LLM client.
+    Returns (best_speedup, best_schedule, trace).
+    """
+    lead = f"{tag}  " if tag else "  "
+    messages = [("user", _prompt.kernel_message(env) + _prompt.multi_candidate_hint(candidates_per_turn))]
+    best_sp, best_sched = 1.0, ""
+    trace = []
+    for it in range(max_iters):
+        with ThreadPoolExecutor(max_workers=len(references)) as ex:   # references propose in parallel
+            ref_resps = list(ex.map(lambda c: c.chat(_prompt.SYSTEM, messages), references))
+        ref_scheds = [b.strip() for resp in ref_resps for b in _SCHED.findall(resp)]
+        agg_msgs = messages + [("user", _prompt.moa_aggregator_hint(ref_scheds, candidates_per_turn))]
+        agg_resp = aggregator.chat(_prompt.SYSTEM, agg_msgs)
+        agg_scheds = [b.strip() for b in _SCHED.findall(agg_resp)]
+        if all(_prompt.STOP_TOKEN in r for r in ref_resps + [agg_resp]):
+            if verbose:
+                print(f"{lead}iter {it}: all agents stopped")
+            break
+        pool, seen = [], set()                          # dedupe, drop empty / stop-token blocks
+        for s in ref_scheds + agg_scheds:
+            if not s or _prompt.STOP_TOKEN in s or s in seen:
+                continue
+            seen.add(s)
+            pool.append(s)
+        messages.append(("model", agg_resp))
+        if not pool:
+            messages.append(("user", f"No <schedule> block found across agents. Propose 1 to "
+                                      f"{candidates_per_turn} each." + _feedback._CONTINUE))
+            continue
+        if len(pool) > max_candidates:
+            if verbose:
+                print(f"{lead}iter {it}: pooled {len(pool)}, measuring first {max_candidates} "
+                      f"(dropped {len(pool) - max_candidates})")    # ponytail: hard cap on compiles/turn
+            pool = pool[:max_candidates]
+        with ThreadPoolExecutor(max_workers=len(pool)) as ex:        # measure the whole pool in parallel
+            results = list(ex.map(env.evaluate, pool))
+        for sched, result in zip(pool, results):
+            trace.append((sched, result.status, result.speedup))
+            if result.status == "success" and result.speedup > best_sp:
+                best_sp, best_sched = result.speedup, sched
+        if verbose:
+            summ = "  ".join(
+                (f"{r.speedup:.2f}x" if r.status == "success" and r.speedup else r.status)
+                for r in results)
+            print(f"{lead}iter {it}: {len(references)} refs -> {len(pool)} cand [{summ}]  best={best_sp:.2f}x")
+        messages.append(("user", _feedback.format_candidates_feedback(pool, results, best_sp)))
+    return best_sp, best_sched, trace
+
+
 def _multi_feedback(r, best):
     s = r["status"]
     if s == "success":

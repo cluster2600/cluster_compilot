@@ -100,6 +100,23 @@ sequenceDiagram
 
 </details>
 
+## Mixture of Agents (`--moa`)
+
+A third fan-out axis, inspired by [Hermes' Mixture of Agents](https://hermes-agent.nousresearch.com/docs/user-guide/features/mixture-of-agents). Each turn:
+
+1. **Reference** models (`--moa "gemini:…,local:…"`) propose schedules **in parallel** (one `ThreadPoolExecutor` over the references).
+2. The **aggregator** (`--aggregator …`, default = the single-model backend) is shown the references' raw proposals and synthesizes its own.
+3. All proposals — references' **and** the aggregator's — are deduped, then **compiled and measured in parallel** by the ground-truth oracle (the same `env.evaluate` fan-out, capped at `max_candidates` per turn). Best measured speedup wins; results feed back to every agent.
+
+This is where ComPilot departs from Hermes: Hermes has no evaluator, so its aggregator *judges* the references. ComPilot has a real compile-and-run oracle, so it is **pool & measure** — diverse proposers, objective selection. References run hotter (temp 0.9) for spread; the aggregator runs cooler (0.4). Any agent can be Gemini or a local OpenAI-compatible model (`local:` spec → `OpenAIClient` against `/v1/chat/completions`: Ollama, vLLM, NIM, LM Studio).
+
+```bash
+python3 run_agent.py --moa "gemini:gemini-2.5-flash,local:qwen2.5-coder:32b" \
+        --aggregator gemini:gemini-2.5-pro --candidates 2
+```
+
+`tests/test_moa.py` exercises the pool/dedupe/measure path offline (mock references + aggregator on GEMM, no key) and checks the OpenAI role mapping.
+
 ## Correctness
 
 `tests/test_parallel_safety.py` hammers a shared environment with hundreds of

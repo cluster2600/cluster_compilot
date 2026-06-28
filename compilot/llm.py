@@ -16,6 +16,14 @@ except ImportError:
     _SSL_CTX = ssl.create_default_context()
 
 
+def _openai_messages(system, messages):
+    """Map our (role, text) turns to OpenAI chat format; 'model' -> 'assistant'."""
+    out = [{"role": "system", "content": system}]
+    for r, t in messages:
+        out.append({"role": "assistant" if r == "model" else "user", "content": t})
+    return out
+
+
 class GeminiClient:
     def __init__(self, model="gemini-2.5-flash", api_key=None, temperature=0.7):
         self.model = model
@@ -45,6 +53,42 @@ class GeminiClient:
         um = out.get("usageMetadata", {})
         self.in_tokens += um.get("promptTokenCount", 0)
         self.out_tokens += um.get("candidatesTokenCount", 0)
+        return text
+
+
+class OpenAIClient:
+    """OpenAI-compatible chat client over stdlib — one client for any local server
+    that speaks /v1/chat/completions: Ollama (base_url .../v1), vLLM, NVIDIA NIM,
+    LM Studio, llama.cpp. Same .chat(system, messages) + token counters as Gemini.
+
+        OpenAIClient("qwen2.5-coder:32b", base_url="http://localhost:11434/v1")
+    """
+
+    def __init__(self, model, base_url="http://localhost:11434/v1", api_key=None, temperature=0.7):
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self.key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        self.temperature = temperature
+        self.in_tokens = self.out_tokens = 0
+
+    def chat(self, system, messages):
+        body = {"model": self.model,
+                "messages": _openai_messages(system, messages),
+                "temperature": self.temperature}
+        headers = {"Content-Type": "application/json"}
+        if self.key:
+            headers["Authorization"] = f"Bearer {self.key}"
+        req = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(body).encode(),
+            headers=headers,
+        )
+        with urllib.request.urlopen(req, timeout=600, context=_SSL_CTX) as resp:  # local models can be slow
+            out = json.load(resp)
+        text = out["choices"][0]["message"]["content"] or ""
+        u = out.get("usage", {})
+        self.in_tokens += u.get("prompt_tokens", 0)
+        self.out_tokens += u.get("completion_tokens", 0)
         return text
 
 
