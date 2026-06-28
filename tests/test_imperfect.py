@@ -1,11 +1,11 @@
-"""Imperfect-nest solvers (Track C): trisolv (all parallelism rejected) and lu
-(carried k rejected; independent i proven legal + run correctly; independent j
-legal but beyond the single-work-share codegen, reported as unsupported).
+"""Imperfect-nest kernels (Track C): the loop-carried solvers and triangular BLAS
+(trisolv, lu, cholesky, ludcmp, durbin, gramschmidt, trmm, symm, nussinov).
 
-Validates the depth-walk codegen runs correctly AND the legality engine extends
-to imperfect, loop-carried nests: it must reject parallel on the sequential loop
-and accept it on the independent ones. (Whether the legal parallel form is
-*faster* than serial -O3 is size/hardware dependent and not asserted here.)
+Validates the tree-structured depth-walk codegen runs correctly AND the legality
+engine extends to imperfect, loop-carried nests with sibling inner loops: it must
+REJECT parallel on a sequential carried loop and ACCEPT it on an independent one,
+with the parallel run's checksum matching the serial baseline. (Whether the legal
+parallel form is *faster* than serial -O3 is size/hardware dependent, not asserted.)
 
     python3 -m tests.test_imperfect
 """
@@ -17,43 +17,55 @@ def _env(name, size="SMALL"):
     return ImperfectEnvironment(sized_kernel(name, size))
 
 
+# (kernel, schedule, expected status). "success" cases actually compile+run the
+# parallel variant and cross-check its checksum against the serial baseline.
+CASES = [
+    ("trisolv", "", "success"),                 # identity baseline runs
+    ("trisolv", "parallel(i)", "parallel_illegal"),   # x[j] recurrence
+    ("trisolv", "parallel(j)", "parallel_illegal"),   # reduction into x[i]
+    ("lu", "parallel(k)", "parallel_illegal"),  # carried elimination loop
+    ("lu", "parallel(i)", "success"),           # independent forall, runs correctly
+    ("lu", "parallel(j)", "success"),           # independent forall, runs correctly
+    ("cholesky", "parallel(i)", "parallel_illegal"),  # reads earlier rows
+    ("cholesky", "parallel(j)", "parallel_illegal"),  # reads earlier same-row cols
+    ("cholesky", "parallel(k)", "parallel_illegal"),  # reduction
+    ("ludcmp", "parallel(i)", "parallel_illegal"),    # sequential row loop
+    ("durbin", "parallel(k)", "parallel_illegal"),    # sequential recurrence
+    ("durbin", "parallel(i)", "parallel_illegal"),    # carried within a step
+    ("gramschmidt", "parallel(k)", "parallel_illegal"),   # A updated every column
+    ("trmm", "parallel(i)", "parallel_illegal"),      # anti-dep on B[k][j], k>i
+    ("trmm", "parallel(j)", "success"),               # columns independent, runs
+    ("symm", "parallel(i)", "parallel_illegal"),      # C[k][j] scatter output dep
+    ("symm", "parallel(j)", "success"),               # columns independent, runs
+    ("nussinov", "parallel(i)", "parallel_illegal"),  # reads table[i+1][j]
+    ("nussinov", "parallel(j)", "parallel_illegal"),  # reads table[i][j-1]
+]
+
+
 def test_registered():
-    assert set(IMPERFECT_REGISTRY) == {"trisolv", "lu"}, IMPERFECT_REGISTRY
+    assert set(IMPERFECT_REGISTRY) == {"trisolv", "lu", "cholesky", "ludcmp", "durbin",
+                                       "gramschmidt", "trmm", "symm", "nussinov"}, IMPERFECT_REGISTRY
 
 
-def test_trisolv_rejects_all_naive_parallelism():
-    env = _env("trisolv")
-    assert env.evaluate("").status == "success"                 # identity baseline runs
-    # i carries the x[j] recurrence; j is a reduction into x[i] -> both rejected
-    assert env.evaluate("parallel(i)").status == "parallel_illegal"
-    assert env.evaluate("parallel(j)").status == "parallel_illegal"
-    print("OK: trisolv identity runs; parallel(i)/parallel(j) both rejected (loop-carried)")
-
-
-def test_lu_rejects_carried_accepts_independent():
-    env = _env("lu", "MEDIUM")
-    assert env.evaluate("parallel(k)").status == "parallel_illegal", "k is the carried elimination loop"
-    ri = env.evaluate("parallel(i)")          # i encloses both statements -> legal, correct, runs
-    assert ri.status == "success" and ri.speedup and ri.speedup > 0, ri
-    # j is also dependence-free, but it doesn't enclose the row-scaling sibling, so the
-    # single-work-share codegen can't emit it correctly -> unsupported (legality still proven)
-    rj = env.evaluate("parallel(j)")
-    assert rj.status == "unsupported", rj
-    print(f"OK: lu parallel(k) rejected; parallel(i) legal+correct ({ri.speedup:.2f}x); "
-          f"parallel(j) legal but beyond single-work-share codegen")
+def test_legality_and_parallel_correctness():
+    envs = {}
+    for name, sched, want in CASES:
+        env = envs.setdefault(name, _env(name))
+        got = env.evaluate(sched)
+        assert got.status == want, f"{name} {sched!r}: got {got.status} ({got.detail}), want {want}"
+        tag = f"{got.speedup:.2f}x" if got.speedup else ""
+        print(f"OK {name:12} {sched or '(identity)':14} -> {got.status:16} {tag}")
 
 
 def test_lu_unsupported_transform_is_legal_but_unexecutable():
     # tile is legal here but the imperfect codegen can't emit it yet -> clear status
-    env = _env("lu", "SMALL")
-    assert env.evaluate("tile3d(k,i,j,16,16,16)").status in ("unsupported", "success"), \
-        env.evaluate("tile3d(k,i,j,16,16,16)")
+    env = _env("lu")
+    assert env.evaluate("tile3d(k,i,j,16,16,16)").status in ("unsupported", "success")
     print("OK: lu legal-but-unsupported transform reported, not crashed")
 
 
 if __name__ == "__main__":
     test_registered()
-    test_trisolv_rejects_all_naive_parallelism()
-    test_lu_rejects_carried_accepts_independent()
+    test_legality_and_parallel_correctness()
     test_lu_unsupported_transform_is_legal_but_unexecutable()
     print("test_imperfect: all checks passed")

@@ -203,8 +203,8 @@ def run():
                     help="PolyBench dataset size class")
     args = ap.parse_args()
 
-    from .kernels import REGISTRY, MULTI_REGISTRY, STENCIL_REGISTRY
-    known = set(REGISTRY) | set(MULTI_REGISTRY) | set(STENCIL_REGISTRY)
+    from .kernels import REGISTRY, MULTI_REGISTRY, STENCIL_REGISTRY, IMPERFECT_REGISTRY
+    known = set(REGISTRY) | set(MULTI_REGISTRY) | set(STENCIL_REGISTRY) | set(IMPERFECT_REGISTRY)
     if args.kernel not in known:
         raise SystemExit(f"unknown kernel {args.kernel!r}; choose from {sorted(known)}")
     curses.wrapper(_main, args)

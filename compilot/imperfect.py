@@ -1,24 +1,27 @@
 """Imperfect-nest kernels (Track C): solvers whose statements live at DIFFERENT
-loop depths and whose outer loop is loop-carried (sequential).
+loop depths, under a possibly loop-carried outer loop, with SIBLING inner loops.
 
-PolyBench solvers (trisolv/lu/cholesky/ludcmp/...) are not perfect nests: a
-triangular solve runs `x[i]=b[i]` (depth 1), an inner reduction (depth 2), then
-`x[i]/=L[i][i]` (depth 1). The perfect-nest codegen can't express that. Here a
-kernel is an explicit list of statements tagged with their loop depth, emitted by
-a depth-walk that opens/closes loops as the depth changes.
+PolyBench solvers (trisolv/lu/cholesky/ludcmp/durbin/gramschmidt, plus the
+triangular BLAS trmm/symm) are not perfect nests. cholesky, under row i, runs a
+j-loop (itself holding a k-reduction then a divide) AND a separate diagonal
+k-loop AND a scalar sqrt — three siblings at differing depths. So a kernel here
+is an explicit list of statements, each tagged with its OWN enclosing loop list;
+codegen builds the loop tree by walking statements in program order and keeping
+the common loop prefix open (open new loops, close the ones that diverge). Two
+adjacent statements with identical loop tuples share the loop (fusion); give a
+loop a different var name to force a sibling loop instead (durbin's z/copy).
 
-Legality reuses the single-statement polyhedral engine on the DEEPEST statement's
-self-dependences — it spans every loop, so it carries the binding dependences for
-this kernel family (the inner reduction/update is what pins the schedule).
-ponytail: deepest-statement model. Exact when the innermost statement constrains
-the schedule (true for the triangular solvers here); add a union-domain
-multi-statement model if a solver needs a cross-statement dependence the deepest
-statement misses.
+Legality reuses the single-statement polyhedral engine on ONE binding statement
+(`poly`) — the deepest/most-constrained one, which carries the dependence that
+pins the schedule for this kernel family. ponytail: single-binding-statement
+model. Exact when one statement constrains the schedule (the triangular solvers);
+add a union-domain multi-statement model if a kernel needs a cross-statement
+dependence the binding statement misses.
 
-Execution supports parallel() (an OpenMP forall on a legal loop) and the identity
-baseline; other legal transforms report "unsupported" (legality is still proven).
-The point of this family is the legality engine REJECTING illegal parallelism on
-the sequential carried loop while ACCEPTING it on the independent loops.
+Execution supports parallel() (an OpenMP `parallel for` on a legal loop) and the
+identity baseline; other legal transforms report "unsupported" (legality still
+proven). The point of this family is the legality engine REJECTING illegal
+parallelism on the sequential carried loop while ACCEPTING it on independent ones.
 """
 from dataclasses import dataclass, field
 
@@ -33,7 +36,7 @@ _EXECUTABLE = {"parallel"}        # transforms the imperfect codegen can emit
 
 @dataclass
 class IStmt:
-    depth: int       # number of enclosing loops (1 = inside loops[0], 2 = loops[0..1], ...)
+    loops: list      # enclosing loops outermost-first: (var, lo, hi) asc, or (var, lo, hi, "rev") desc
     body: str        # raw C with explicit flat indexing
 
 
@@ -42,49 +45,47 @@ class ImperfectKernel:
     name: str
     sizes: dict
     arrays: dict                 # name -> tuple of dims (any rank)
-    loops: list                  # canonical nest [(var, lo, hi), ...]
     statements: list             # [IStmt] in program order
-    poly: PolyKernel             # deepest statement, spans all loops -> legality
+    poly: PolyKernel             # binding statement -> legality
     final: str                   # checksum array
     reset: dict = field(default_factory=dict)   # array -> "zero" | "reinit" (per rep)
-    setup: str = ""              # C run each rep after reset, before timing (e.g. diagonal boost)
+    setup: str = ""              # C run each rep before timing (scalar decls, diagonal boost)
 
 
-def _emit_nest(loops, statements, parallel_vars, base):
-    """Depth-walk: open loops to reach each statement's depth, close on the way out.
+def _emit_nest(statements, parallel_vars, base):
+    """Walk statements, keeping the common loop prefix open (tree codegen).
 
-    A parallel loop becomes ONE hoisted `#pragma omp parallel` region with an
-    `omp for` work-share on that loop (implicit barrier each step), not a fresh
-    fork/join per outer iteration — the latter is pure overhead for the carried
-    solvers (a parallel region created N times). Outer loops run redundantly in
-    every thread as pure control. ponytail: correct when the parallel loop
-    encloses all real work and its outer loops are pure loop control (the solver
-    family); a statement strictly between an outer loop and the parallel loop
-    would need explicit single/masking.
+    A parallel loop gets a `#pragma omp parallel for` at each of its occurrences.
+    Per-occurrence fork/join (not a hoisted region) — always correct regardless of
+    sibling statements; the solver family doesn't win from parallelism anyway, so
+    correctness + legality is the deliverable, not work-share overhead.
     """
-    par = [v for v, _, _ in loops if v in parallel_vars]
-    worksh = par[0] if par else None          # only the outermost level is work-shared
-    pad = "  " if worksh else ""
-    ind = lambda n: base + pad + "  " * n
-    lines, cur = [], 0
+    ind = lambda n: base + "  " * n
+    lines, open_loops = [], []
     for st in statements:
-        while cur < st.depth:
-            var, lo, hi = loops[cur]
-            if var == worksh:
-                lines.append(f"{ind(cur)}#pragma omp for")
-            lines.append(f"{ind(cur)}for(int {var}={lo};{var}<{hi};{var}++){{")
-            cur += 1
-        while cur > st.depth:
-            cur -= 1
-            lines.append(f"{ind(cur)}}}")
-        lines.append(f"{ind(st.depth)}{st.body}")
-    while cur > 0:
-        cur -= 1
-        lines.append(f"{ind(cur)}}}")
-    body = "\n".join(lines)
-    if worksh:
-        return f"{base}#pragma omp parallel\n{base}{{\n{body}\n{base}}}"
-    return body
+        cp = 0
+        while (cp < len(open_loops) and cp < len(st.loops)
+               and tuple(open_loops[cp]) == tuple(st.loops[cp])):
+            cp += 1
+        while len(open_loops) > cp:                       # close diverged loops
+            open_loops.pop()
+            lines.append(ind(len(open_loops)) + "}")
+        for lv in st.loops[cp:]:                          # open this statement's new loops
+            n = len(open_loops)
+            var, lo, hi = lv[0], lv[1], lv[2]
+            rev = len(lv) > 3 and lv[3] == "rev"
+            if var in parallel_vars:
+                lines.append(ind(n) + "#pragma omp parallel for")
+            if rev:
+                lines.append(ind(n) + f"for(int {var}=({hi})-1;{var}>=({lo});{var}--){{")
+            else:
+                lines.append(ind(n) + f"for(int {var}={lo};{var}<{hi};{var}++){{")
+            open_loops.append(lv)
+        lines.append(ind(len(open_loops)) + st.body)
+    while open_loops:
+        open_loops.pop()
+        lines.append(ind(len(open_loops)) + "}")
+    return "\n".join(lines)
 
 
 def _emit(ik, parallel_vars):
@@ -98,7 +99,7 @@ def _emit(ik, parallel_vars):
         f"    for (long f_=0;f_<(long)({tot(a)});f_++) {a}[f_]={pat if m == 'reinit' else '0.0'};"
         for a, m in ik.reset.items())
     setup = f"    {ik.setup}" if ik.setup else ""
-    nest = _emit_nest(ik.loops, ik.statements, parallel_vars, "    ")
+    nest = _emit_nest(ik.statements, parallel_vars, "    ")
     checksum = f"  double acc_=0; for(long f_=0;f_<(long)({tot(ik.final)});f_++) acc_+={ik.final}[f_];"
     return f"""#include <stdio.h>
 #include <stdlib.h>
@@ -107,6 +108,8 @@ def _emit(ik, parallel_vars):
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+#define MAX(a,b) ((a)>(b)?(a):(b))
+#define MIN(a,b) ((a)<(b)?(a):(b))
 int main(void){{
 {sizes}
 {allocs}
@@ -166,18 +169,6 @@ class ImperfectEnvironment:
         if not used <= _EXECUTABLE:
             return Result("unsupported", detail=f"legal, but imperfect codegen lacks {used - _EXECUTABLE}",
                           schedule=schedule_text)
-        # Codegen ceiling: the hoisted parallel region work-shares the OUTERMOST parallel
-        # loop, which must enclose every statement. A shallower sibling (e.g. lu's row-scale
-        # before the update loop) would run redundantly in all threads -> wrong result. The
-        # dependence is legal; this codegen just can't emit it. Report it, don't emit it.
-        if parallel_vars:
-            order = [v for v, _, _ in self.ik.loops]
-            w = min(order.index(v) for v in parallel_vars)
-            if any(st.depth <= w for st in self.ik.statements):
-                return Result("unsupported",
-                              detail=f"legal, but single-work-share codegen can't parallelize "
-                                     f"{order[w]} with a shallower sibling statement",
-                              schedule=schedule_text)
         base = self.baseline()
         r = _runner.compile_and_run(_emit(self.ik, parallel_vars))
         if not r["ok"]:

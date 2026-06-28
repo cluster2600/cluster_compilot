@@ -14,6 +14,13 @@ CASES = {
     "jacobi2d": ["tile2d(i,j,64,64)\nparallel(i_t)", "tile2d(i,j,64,64)\nparallel(i_t)"],
     "seidel2d": ["skew(j,i,1)"],   # jacobi parallelizes; seidel needs skewing
     "heat3d": ["parallel(i)", "parallel(i)"],   # 3-D Jacobi: spatial loops fully parallel
+    # fdtd-2d: source boundary + 3 field updates, every sweep reads other arrays -> parallel
+    "fdtd2d": ["parallel(j)", "parallel(i)", "parallel(i)", "parallel(i)"],
+    # adi: column then row sweep (each forward + back); parallel on the orthogonal i
+    "adi": ["parallel(i)"] * 8,
+    # deriche: horizontal passes parallel across rows (i); vertical across columns (j)
+    "deriche": ["parallel(i)", "parallel(i)", "parallel(i)",
+                "parallel(j)", "parallel(j)", "parallel(j)"],
 }
 
 if __name__ == "__main__":
