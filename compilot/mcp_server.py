@@ -198,6 +198,8 @@ def main():
             msg = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if not isinstance(msg, dict):   # valid JSON but not a request object (e.g. [1,2], 5)
+            continue
         resp = handle(msg)
         if resp is not None:
             sys.stdout.write(json.dumps(resp) + "\n")

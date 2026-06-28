@@ -100,7 +100,9 @@ def _emit(ik, parallel_vars):
         for a, m in ik.reset.items())
     setup = f"    {ik.setup}" if ik.setup else ""
     nest = _emit_nest(ik.statements, parallel_vars, "    ")
-    checksum = f"  double acc_=0; for(long f_=0;f_<(long)({tot(ik.final)});f_++) acc_+={ik.final}[f_];"
+    # position-weighted (f_+1): an unweighted sum is permutation-invariant and would
+    # miss a transposed/mirrored write that lands the right values in the wrong cells.
+    checksum = f"  double acc_=0; for(long f_=0;f_<(long)({tot(ik.final)});f_++) acc_+=(double)(f_+1)*{ik.final}[f_];"
     return f"""#include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -177,5 +179,5 @@ class ImperfectEnvironment:
         if abs(r["checksum"] - ref) > 1e-6 * max(1.0, abs(ref)):
             return Result("incorrect", detail=f"checksum {r['checksum']:.6e} != baseline {ref:.6e}",
                           schedule=schedule_text)
-        return Result("success", speedup=base["time"] / r["time"],
+        return Result("success", speedup=base["time"] / max(r["time"], 1e-9),
                       detail=f"{base['time']:.4f}s -> {r['time']:.4f}s", schedule=schedule_text)

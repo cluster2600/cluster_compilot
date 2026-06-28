@@ -107,8 +107,11 @@ def is_legal(D: isl.UnionMap, theta: isl.UnionMap):
     violations = isl.UnionMap("{ }")
     for m in maps:
         ndim = m.dim(isl.dim_type.out)
-        reversed_order = _lex_relation(ndim, "ge")     # { t -> t' : t' <<lex t }  (violated)
-        bad = m.intersect(reversed_order)
+        # A dependence is legal only if its sink runs STRICTLY after its source.
+        # Violations = everything not strictly forward: reverse order AND equal time
+        # (theta collapsing source and sink to the same logical time, e.g. a bad fusion).
+        forward = _lex_relation(ndim, "lt")            # { t -> t' : t <<lex t' }  (legal)
+        bad = m.subtract(forward)
         if not bad.is_empty():
             violations = violations.union(isl.UnionMap.from_map(bad))
     return violations.is_empty(), violations

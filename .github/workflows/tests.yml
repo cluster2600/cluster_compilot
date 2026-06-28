@@ -1,0 +1,27 @@
+# Run the test suite on every push/PR. The suite is designed for `python -m tests.X`
+# (asserts live in each module's __main__), so we iterate the modules rather than
+# rely on pytest collection. Needs clang + libomp for the codegen/measurement path.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends clang libomp-dev
+      - run: pip install .
+      - name: Run all test modules
+        run: |
+          set -e
+          for f in tests/test_*.py; do
+            echo "::group::$f"
+            python -m "tests.$(basename "$f" .py)"
+            echo "::endgroup::"
+          done

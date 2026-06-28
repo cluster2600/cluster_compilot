@@ -9,7 +9,9 @@ import time
 import urllib.error
 import urllib.request
 
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+# Key goes in the x-goog-api-key header, NOT the URL: query-string secrets leak
+# into proxy/server access logs and into any exception that carries the URL.
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 try:                                    # macOS python.org builds lack a system CA bundle
     import certifi
@@ -69,15 +71,14 @@ class GeminiClient:
             "contents": [{"role": r, "parts": [{"text": t}]} for r, t in messages],
             "generationConfig": {"temperature": self.temperature},
         }
-        req = urllib.request.Request(
-            GEMINI_URL.format(model=self.model, key=self.key),
-            data=json.dumps(body).encode(),
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=180, context=_SSL_CTX) as resp:
-            out = json.load(resp)
-        cand = out["candidates"][0]
-        text = "".join(p.get("text", "") for p in cand["content"]["parts"])
+        out = _http_post_json(
+            GEMINI_URL.format(model=self.model), body,
+            {"Content-Type": "application/json", "x-goog-api-key": self.key}, timeout=180)
+        try:                                  # safety-blocked/empty responses lack candidates
+            cand = out["candidates"][0]
+            text = "".join(p.get("text", "") for p in cand["content"]["parts"])
+        except (KeyError, IndexError, TypeError):
+            raise RuntimeError(f"unexpected Gemini response: {str(out)[:300]}") from None
         um = out.get("usageMetadata", {})
         self.in_tokens += um.get("promptTokenCount", 0)
         self.out_tokens += um.get("candidatesTokenCount", 0)

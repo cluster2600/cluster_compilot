@@ -33,9 +33,11 @@ CASES = [
     ("durbin", "parallel(k)", "parallel_illegal"),    # sequential recurrence
     ("durbin", "parallel(i)", "parallel_illegal"),    # carried within a step
     ("gramschmidt", "parallel(k)", "parallel_illegal"),   # A updated every column
+    ("gramschmidt", "parallel(i)", "parallel_illegal"),   # i is the nrm/R reduction, not the A-update
     ("trmm", "parallel(i)", "parallel_illegal"),      # anti-dep on B[k][j], k>i
     ("trmm", "parallel(j)", "success"),               # columns independent, runs
     ("symm", "parallel(i)", "parallel_illegal"),      # C[k][j] scatter output dep
+    ("symm", "parallel(k)", "parallel_illegal"),      # temp2 reduction carried on k
     ("symm", "parallel(j)", "success"),               # columns independent, runs
     ("nussinov", "parallel(i)", "parallel_illegal"),  # reads table[i+1][j]
     ("nussinov", "parallel(j)", "parallel_illegal"),  # reads table[i][j-1]

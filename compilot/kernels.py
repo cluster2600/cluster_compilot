@@ -693,8 +693,13 @@ def _gramschmidt():
         IStmt(KJ + [("i", "0", "M")], "R[k*N+j] += Q[i*N+k]*A[i*N+j];"),
         IStmt(KJ + [("i2", "0", "M")], "A[i2*N+j] -= Q[i2*N+k]*R[k*N+j];"),
     ]
+    # The labelled `i` loop in code is the R-reduction `R[k][j] += Q[i][k]*A[i][j]`
+    # (the A-update uses i2). Model R[k,j] as written+read across i so the i loop
+    # carries a dependence and parallel(i) is rejected; parallel(j) stays legal
+    # (distinct R[k,j]/A[i,j] per j). k stays sequential via the A[i,j] WAW over k.
     poly = PolyKernel("gramschmidt", ["k", "j", "i"], "0<=k<N and k<j<N and 0<=i<M",
-                      [("A", "i,j")], [("Q", "i,k"), ("R", "k,j"), ("A", "i,j")], ["M", "N"])
+                      [("A", "i,j"), ("R", "k,j")],
+                      [("Q", "i,k"), ("R", "k,j"), ("A", "i,j")], ["M", "N"])
     return ImperfectKernel("gramschmidt", {"M": M, "N": N},
                            {"A": ("M", "N"), "R": ("N", "N"), "Q": ("M", "N")},
                            stmts, poly, final="Q",
@@ -733,9 +738,13 @@ def _symm():
         IStmt(IJ + [("k", "0", "i")], "temp2 += B[k*N+j]*A[i*M+k];"),
         IStmt(IJ, "C[i*N+j] = 1.2*C[i*N+j] + 1.5*B[i*N+j]*A[i*M+i] + 1.5*temp2;"),
     ]
-    # binding statement: the C[k][j] scatter -> output dep carried on i; reduction on k.
+    # binding statement: the C[k][j] scatter -> output dep carried on i. The fused
+    # `temp2 += ...` reduction over k is modeled by a virtual accumulator acc[i,j]
+    # (written+read for all k), so the k loop carries a dependence and parallel(k) is
+    # correctly rejected. acc is legality-only; codegen emits the IStmt bodies above.
     poly = PolyKernel("symm", ["i", "j", "k"], "0<=i<M and 0<=j<N and 0<=k<i",
-                      [("C", "k,j")], [("B", "i,j"), ("A", "i,k"), ("C", "k,j")], ["M", "N"])
+                      [("C", "k,j"), ("acc", "i,j")],
+                      [("B", "i,j"), ("A", "i,k"), ("C", "k,j"), ("acc", "i,j")], ["M", "N"])
     return ImperfectKernel("symm", {"M": M, "N": N},
                            {"A": ("M", "M"), "B": ("M", "N"), "C": ("M", "N")},
                            stmts, poly, final="C", reset={"C": "reinit"})

@@ -106,3 +106,47 @@ flowchart LR
 ```
 
 </details>
+
+## Kernel registries
+
+Four registries in `compilot/kernels.py`, each with its own codegen + environment.
+Together they cover the full PolyBench/C 4.2.1 set (30/30) across 5 size classes.
+
+| Registry | Shape | Codegen | Examples |
+|---|---|---|---|
+| `REGISTRY` | single statement, perfect nest | `codegen.py` | gemm, syrk, syr2k, floyd-warshall |
+| `MULTI_REGISTRY` | a sequence of statements | `multikernel.py` | 2mm, 3mm, gemver, covariance, doitgen |
+| `STENCIL_REGISTRY` | sequential time loop over spatial sweeps | `stencil.py` | jacobi-1d/2d, seidel-2d, heat-3d, fdtd-2d, adi, deriche |
+| `IMPERFECT_REGISTRY` | loop-carried solvers / triangular BLAS (tree nest) | `imperfect.py` | trisolv, lu, cholesky, ludcmp, durbin, gramschmidt, trmm, symm, nussinov |
+
+## Single-binding-statement legality model (imperfect kernels)
+
+Imperfect kernels emit a *tree* of statements (the real C), but legality is decided
+against **one** `PolyKernel` that captures the *binding* dependence. Simple, with
+one sharp edge: the oracle only sees the dependences you encode. A **reduction that
+accumulates into an element other than the binding statement's own write** is
+invisible unless modeled explicitly.
+
+```mermaid
+flowchart TD
+  ST["Imperfect kernel<br/>tree of IStmt (emitted C)"] --> CG2["codegen: per-occurrence<br/>#pragma omp parallel for"]
+  ST --> PK["one PolyKernel 'poly'<br/>(the binding dependence)"]
+  PK --> LEG2{"is_parallel(loop)?<br/>does poly carry a dep here?"}
+  LEG2 -- "no dep in poly" --> ACC["parallel ACCEPTED"]
+  ACC --> RACE{"but a real reduction<br/>accumulates off the<br/>binding's write element?"}
+  RACE -- yes --> BUG["UNSOUND: race emitted<br/>(only the checksum may catch it)"]
+  RACE -- no --> SAFE["sound"]
+  LEG2 -- "carries dep" --> REJ["parallel REJECTED"]
+```
+
+This is the class of bug fixed in issues **#9/#10**: `symm`'s `temp2 += …` reduction
+(carried on `k`) and `gramschmidt`'s `nrm`/`R[k][j]` reductions (carried on `i`)
+accumulate into *different* elements than the binding write, so the oracle wrongly
+accepted `parallel(k)` / `parallel(i)` until those reductions were added to `poly`
+as virtual accumulator arrays (`acc[i,j]`, `R[k,j]`).
+
+**Rule of thumb:** when adding an imperfect kernel, every loop that runs a reduction
+must carry a dependence in `poly`, even if the binding statement's write does not.
+The runtime checksum is a backstop, not the proof — a data race can pass a checksum
+by luck, so the checksum is also **position-weighted** (`Σ (idx+1)·out[idx]`) to
+catch transposed/mirrored writes that an unweighted sum would miss.

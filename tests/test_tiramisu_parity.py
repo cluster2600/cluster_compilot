@@ -8,6 +8,7 @@ Skips if libtiramisu isn't built (third_party/, gitignored).
 Run: python3 -m tests.test_tiramisu_parity
 """
 import os
+import sys
 
 from compilot import schedule as S
 from compilot.polyhedral import dependences, is_legal
@@ -30,8 +31,9 @@ def isl_legal(txt):
 
 
 if __name__ == "__main__":
-    if not os.path.exists(os.path.join(T.BUILD, "libtiramisu.dylib")):
-        print("SKIP: libtiramisu not built (third_party/ is gitignored)")
+    _lib = "libtiramisu.dylib" if sys.platform == "darwin" else "libtiramisu.so"
+    if not os.path.exists(os.path.join(T.BUILD, _lib)):
+        print(f"SKIP: {_lib} not built (third_party/ is gitignored)")
         raise SystemExit(0)
     agree = 0
     for txt, expect in CASES:

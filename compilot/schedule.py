@@ -14,6 +14,9 @@ emit, while staying trivial to parse.
 import re
 
 _LINE = re.compile(r"\s*(\w+)\s*\(([^)]*)\)\s*")
+# Every arg is either a loop identifier or an integer factor. Enforcing this stops
+# anything else (these args are interpolated into the C that gets compiled and run).
+_ARG = re.compile(r"-?\d+|[A-Za-z_]\w*")
 
 # The 9-primitive repertoire (Tiramisu/ComPilot), plus reorder as generalized interchange.
 _PRIMITIVES = {
@@ -36,5 +39,8 @@ def parse(text: str):
         args = [a.strip() for a in m.group(2).split(",") if a.strip()]
         if op not in _PRIMITIVES:
             raise ValueError(f"unknown transform {op!r} (known: {sorted(_PRIMITIVES)})")
+        for a in args:
+            if not _ARG.fullmatch(a):
+                raise ValueError(f"invalid schedule argument {a!r} in {raw!r}")
         ops.append((op, args))
     return ops
