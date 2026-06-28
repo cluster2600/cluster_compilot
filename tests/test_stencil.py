@@ -7,6 +7,7 @@ Run: python3 -m tests.test_stencil
 """
 from compilot.kernels import STENCIL_REGISTRY
 from compilot.stencil import StencilEnvironment
+from compilot import prompt
 
 CASES = {
     "jacobi1d": ["parallel(i)", "parallel(i)"],
@@ -29,4 +30,10 @@ if __name__ == "__main__":
         st = se.evaluate(bad)["status"]
         print(f"        seidel2d {bad[0]} -> [{st}]")
         assert st == "parallel_illegal", f"seidel {bad}: {st}"
+    # regression: the dialogue prompt builder must handle SStmt (no `.output`) — used to
+    # crash run_agent.py --kernel jacobi2d with AttributeError in kernel_message_multi.
+    for name, factory in STENCIL_REGISTRY.items():
+        msg = prompt.kernel_message_multi(StencilEnvironment(factory()))
+        assert "SEQUENTIAL" in msg and "<schedule>" in msg, f"{name}: stencil prompt malformed"
+    print("        prompt builder OK for all stencils (no SStmt.output crash)")
     print("\nStencils validated: jacobi-1d/2d parallel; seidel-2d needs skewing (parallel rejected).")

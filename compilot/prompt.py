@@ -94,15 +94,41 @@ def moa_aggregator_hint(proposals, n):
             f"and measured in parallel, so explore complementary strategies.")
 
 
+def moa_aggregator_hint_multi(ref_sets, n):
+    """MoA aggregator guidance for multi-statement kernels: the references' complete
+    schedule sets this turn (one block per statement), to synthesize into one set."""
+    shown = []
+    for i, st in enumerate(ref_sets):
+        body = "\n".join(f"  stmt {j}: {b or '(identity)'}" for j, b in enumerate(st))
+        shown.append(f"[proposal {i + 1}]\n{body}")
+    if shown:
+        head = "Other agents proposed these complete schedules this turn:\n\n" + "\n\n".join(shown) + "\n\n"
+    else:
+        head = "The other agents proposed no complete schedule this turn.\n\n"
+    return (head + f"As the aggregator, synthesize the best ideas into ONE complete schedule: "
+            f"exactly {n} <schedule> blocks, one per statement IN ORDER. Every proposal "
+            f"(yours and theirs) is compiled and measured in parallel.")
+
+
 def kernel_message_multi(menv):
     from .multikernel import _Kernelish
-    n = len(menv.mk.statements)
-    parts = [f"This kernel has {n} statements, run in sequence (a later statement may read an "
-             f"earlier one's output buffer). Provide exactly {n} <schedule> blocks, one per "
-             f"statement, IN ORDER.\n"]
-    for idx, s in enumerate(menv.mk.statements):
+    stmts = menv.mk.statements
+    n = len(stmts)
+    if hasattr(menv.mk, "tsteps"):            # StencilKernel: spatial stmts inside a sequential time loop
+        intro = (f"This is a stencil: {n} spatial statement(s) run every time step inside a "
+                 f"SEQUENTIAL time loop. The time loop carries dependences and CANNOT be "
+                 f"parallelized — schedule only the spatial loops shown (tile / reorder / "
+                 f"parallelize them). Provide exactly {n} <schedule> block(s), one per "
+                 f"statement, IN ORDER.\n")
+    else:
+        intro = (f"This kernel has {n} statements, run in sequence (a later statement may read an "
+                 f"earlier one's output buffer). Provide exactly {n} <schedule> blocks, one per "
+                 f"statement, IN ORDER.\n")
+    parts = [intro]
+    for idx, s in enumerate(stmts):
         nest = codegen.render_nest(_Kernelish(s.loops, s.body))
-        parts.append(f"Statement {idx} (writes `{s.output}`):\n{nest}\n")
+        label = f" (writes `{s.output}`)" if hasattr(s, "output") else ""
+        parts.append(f"Statement {idx}{label}:\n{nest}\n")
     parts.append(f"Baseline time (all statements): {menv.baseline()['time']:.4f} s.\n"
                  f"Analyze each statement, then output {n} schedule blocks in order.")
     return "\n".join(parts)
