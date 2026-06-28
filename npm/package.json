@@ -1,6 +1,6 @@
 {
   "name": "@cluster2600/compilot-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server launcher for cluster_compilot — LLM-guided polyhedral loop optimization. Use with Claude Code & Codex.",
   "bin": {
     "compilot-mcp": "bin/compilot-mcp.js"
