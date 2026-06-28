@@ -22,16 +22,33 @@ Full docs live in [`docs/`](docs/):
 
 ## Quick start
 
+Requires **Python 3.14+** (`islpy 2026.1` ships `cp314` wheels; see [Parallelism](#parallelism-python-314) below for why).
+
 ```bash
 git clone https://github.com/cluster2600/cluster_compilot.git
 cd cluster_compilot
-pip install -r requirements.txt        # islpy, certifi
+python3.14 -m venv .venv && . .venv/bin/activate
+pip install -e .                       # islpy, certifi (from pyproject; requires-python >=3.14)
 brew install libomp                    # OpenMP for clang (macOS)
 
 python3 -m tests.test_legality         # prove the legality oracle (10/10)
+python3 -m tests.test_parallel_safety  # parallel evaluate() == serial verdicts
 python3 run_agent.py --mock            # full agent loop, no API key
 python3 run_agent.py --iters 15        # live Gemini (key from env or OpenBao)
+python3 run_agent.py --k 5 --candidates 4   # parallel best-of-5, 4 candidate schedules/turn
 ```
+
+### Parallelism (Python 3.14)
+
+The search fans out across threads in two places:
+
+- **best-of-k** — the K independent dialogues run concurrently (`ThreadPoolExecutor`).
+- **candidates per turn** — `--candidates N` lets the LLM propose up to N schedules in one turn, compiled and measured in parallel.
+
+This scales on the **standard** interpreter because the heavy work releases the GIL: the LLM HTTP calls and the `clang` compile/run are I/O- and subprocess-bound. (Free-threaded `3.14t` is *not* used — `islpy` ships no `cp314t` wheel, and it would add little here since the in-process polyhedral work is a small slice.) Two locks keep this correct:
+
+- **legality lock** (`backend_isl._ISL_LOCK`) — islpy builds objects in a process-global, non-thread-safe ISL context, so the (fast) `build_theta`/`is_legal`/`is_parallel` section is serialized; compile/run stays outside it.
+- **measurement lock** (`runner._RUN_LOCK`) — only one *timed* binary executes at a time. Concurrent benchmark processes would contend for cores/caches and bias the very wall-clock speedup being optimized; compiles and LLM calls still overlap, so the search is parallel while the numbers stay trustworthy.
 
 See the [building guide](docs/building.md) and [user guide](docs/user-guide.md) for everything else (live keys, Tiramisu build, adding kernels).
 

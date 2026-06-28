@@ -10,12 +10,21 @@ evaluate(schedule) does what Tiramisu does for ComPilot, via ISL + clang:
 
 Returns a Result whose `status` is one of the paper's feedback categories.
 """
+import threading
 from dataclasses import dataclass
 from . import schedule as _schedule
 from . import codegen as _codegen
 from . import runner as _runner
 from .polyhedral import dependences, is_legal, is_parallel
 from .scheduler import build_theta
+
+# islpy builds every object in its process-global DEFAULT_CONTEXT, and ISL is not
+# thread-safe within one context. evaluate() runs concurrently when the agent
+# fans out (parallel best-of-k / multi-candidate turns), so the polyhedral
+# section is serialized by this lock. The slow part — clang compile + run, a
+# subprocess that releases the GIL — stays OUTSIDE the lock and runs in parallel,
+# which is where the wall-clock speedup actually comes from.
+_ISL_LOCK = threading.Lock()
 
 # transforms the C codegen can currently emit (legality covers all 9; execution
 # of skew/reverse/fuse/shift is added with their codegen).
@@ -46,13 +55,20 @@ class Environment:
         self.pk = poly_kernel
         self.D = dependences(poly_kernel)
         self._baseline = None
+        self._baseline_lock = threading.Lock()
 
     def baseline(self):
+        # Compiled once and shared across concurrent runs. Pre-warm by calling this
+        # before fanning out; the double-checked lock keeps it safe (and single
+        # compile) even if first touched mid-fan-out. A dedicated lock means the
+        # baseline subprocess never blocks other threads' legality checks.
         if self._baseline is None:
-            r = _runner.compile_and_run(_codegen.generate_c(self.ek, ""))
-            if not r["ok"]:
-                raise RuntimeError(f"baseline failed: {r}")
-            self._baseline = r
+            with self._baseline_lock:
+                if self._baseline is None:
+                    r = _runner.compile_and_run(_codegen.generate_c(self.ek, ""))
+                    if not r["ok"]:
+                        raise RuntimeError(f"baseline failed: {r}")
+                    self._baseline = r
         return self._baseline
 
     def evaluate(self, schedule_text) -> Result:
@@ -62,18 +78,23 @@ class Environment:
             return Result("invalid", detail=str(e), schedule=schedule_text)
 
         # --- polyhedral legality (all 9 primitives) ---
-        try:
-            theta, labels, par, unroll = build_theta(self.pk, ops)
-        except ValueError as e:
-            return Result("invalid", detail=str(e), schedule=schedule_text)
-        legal, viol = is_legal(self.D, theta)
-        if not legal:
-            return Result("illegal", detail=f"violates dependences: {viol}", schedule=schedule_text)
-        for lbl, lvl in par:
-            if not is_parallel(self.D, theta, lvl):
-                return Result("parallel_illegal",
-                              detail=f"loop {lbl} carries a dependence; cannot parallelize",
-                              schedule=schedule_text)
+        # Serialized: build_theta + is_legal + is_parallel all operate on islpy
+        # objects in the shared DEFAULT_CONTEXT, which is not thread-safe. This is
+        # the fast part (microseconds-milliseconds); the lock is released before
+        # the expensive compile+run below so those proceed in parallel.
+        with _ISL_LOCK:
+            try:
+                theta, labels, par, unroll = build_theta(self.pk, ops)
+            except ValueError as e:
+                return Result("invalid", detail=str(e), schedule=schedule_text)
+            legal, viol = is_legal(self.D, theta)
+            if not legal:
+                return Result("illegal", detail=f"violates dependences: {viol}", schedule=schedule_text)
+            for lbl, lvl in par:
+                if not is_parallel(self.D, theta, lvl):
+                    return Result("parallel_illegal",
+                                  detail=f"loop {lbl} carries a dependence; cannot parallelize",
+                                  schedule=schedule_text)
 
         # --- execution / measurement ---
         used = {op for op, _ in ops}
