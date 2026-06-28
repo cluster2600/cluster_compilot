@@ -112,6 +112,8 @@ All suites pass; the benchmark is reproducible (`python3 bench.py`). Full output
 
 **Tiramisu backend — complete:** legality (ISL↔Tiramisu **4/4**) + Halide **codegen** (128 KB object) + **execution** (runs+times its own generated code via a Halide-buffer wrapper: tile2d+parallel → **1.7× measured by Tiramisu**).
 
+**Python 3.15:** forward-ready — `requires-python >=3.14` has no upper cap, and the suite is **deprecation-clean** (passes under `-W error::DeprecationWarning`, so nothing 3.15 removes is in use). The only blocker is upstream: `islpy` ships no `cp315` wheel yet (cp310–cp314 only), and a source build needs the ISL C library. Run `python3 check_py315.py` to probe PyPI for the wheel — when it flips to `READY`, `pip install -e .` should work on 3.15 unchanged. (Free-threaded `3.15t` additionally needs a `cp315t` wheel, same as the `3.14t` gap.)
+
 **Pending:**
 - **full PolyBench/C 4.2.1 (150 instances)** — **18/30 kernels**; **every computational pattern works** (matmul, matvec, reduction, triangular, multi-statement, fusion, in-place, datamining, time-stepped stencils, **3-D**). The remaining ~12 are loop-carried *solvers* (cholesky/lu/ludcmp/trisolv/durbin — need imperfect-nest codegen) and complex stencils (heat-3d/fdtd-2d/adi), correlation; plus the ×5 size classes
 
