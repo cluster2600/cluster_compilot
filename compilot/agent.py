@@ -25,16 +25,17 @@ def parse_response(text):
     return body, False
 
 
-def run_dialogue(env, llm, max_iters=30, verbose=True, candidates_per_turn=1, tag=""):
+def run_dialogue(env, llm, max_iters=30, verbose=True, candidates_per_turn=1, tag="", on_eval=None):
     """One dialogue. Returns (best_speedup, best_schedule, trace).
 
     candidates_per_turn > 1 switches to a fan-out dialogue where the model proposes
     several schedules per turn that are compiled and measured in parallel (see
     _run_dialogue_candidates). tag prefixes log lines so the interleaved output of
-    concurrent best-of-k runs stays readable.
+    concurrent best-of-k runs stays readable. on_eval(sched, status, speedup), if
+    given, is called for every measured candidate (live monitors, e.g. the TUI).
     """
     if candidates_per_turn > 1:
-        return _run_dialogue_candidates(env, llm, max_iters, verbose, candidates_per_turn, tag)
+        return _run_dialogue_candidates(env, llm, max_iters, verbose, candidates_per_turn, tag, on_eval)
     lead = f"{tag}  " if tag else "  "
     messages = [("user", _prompt.kernel_message(env))]
     best_sp, best_sched = 1.0, ""
@@ -52,6 +53,8 @@ def run_dialogue(env, llm, max_iters=30, verbose=True, candidates_per_turn=1, ta
             continue
         result = env.evaluate(sched)
         trace.append((sched, result.status, result.speedup))
+        if on_eval:
+            on_eval(sched, result.status, result.speedup)
         if result.status == "success" and result.speedup > best_sp:
             best_sp, best_sched = result.speedup, sched
         if verbose:
@@ -61,7 +64,7 @@ def run_dialogue(env, llm, max_iters=30, verbose=True, candidates_per_turn=1, ta
     return best_sp, best_sched, trace
 
 
-def _run_dialogue_candidates(env, llm, max_iters, verbose, n, tag):
+def _run_dialogue_candidates(env, llm, max_iters, verbose, n, tag, on_eval=None):
     """Fan-out dialogue: each turn the model proposes up to n schedules, which are
     evaluated in parallel (ThreadPoolExecutor). env.evaluate serializes its own
     polyhedral section; the clang compile/run of each candidate runs concurrently.
@@ -86,6 +89,8 @@ def _run_dialogue_candidates(env, llm, max_iters, verbose, n, tag):
             results = list(ex.map(env.evaluate, cands))
         for sched, result in zip(cands, results):
             trace.append((sched, result.status, result.speedup))
+            if on_eval:
+                on_eval(sched, result.status, result.speedup)
             if result.status == "success" and result.speedup > best_sp:
                 best_sp, best_sched = result.speedup, sched
         if verbose:
@@ -98,7 +103,7 @@ def _run_dialogue_candidates(env, llm, max_iters, verbose, n, tag):
 
 
 def run_dialogue_moa(env, references, aggregator, max_iters=30, verbose=True,
-                     candidates_per_turn=2, max_candidates=8, tag=""):
+                     candidates_per_turn=2, max_candidates=8, tag="", on_eval=None):
     """Mixture-of-Agents dialogue (pool & measure), Hermes-style two-tier proposing.
 
     Each turn: every *reference* model proposes schedules in parallel (advisory),
@@ -146,6 +151,8 @@ def run_dialogue_moa(env, references, aggregator, max_iters=30, verbose=True,
             results = list(ex.map(env.evaluate, pool))
         for sched, result in zip(pool, results):
             trace.append((sched, result.status, result.speedup))
+            if on_eval:
+                on_eval(sched, result.status, result.speedup)
             if result.status == "success" and result.speedup > best_sp:
                 best_sp, best_sched = result.speedup, sched
         if verbose:
@@ -168,7 +175,7 @@ def _multi_feedback(r, best):
     return f"{s}: {r.get('detail','')}" + _feedback._CONTINUE
 
 
-def run_dialogue_multi(menv, llm, max_iters=30, verbose=True):
+def run_dialogue_multi(menv, llm, max_iters=30, verbose=True, on_eval=None):
     """Dialogue for a multi-statement kernel: one <schedule> block per statement."""
     n = len(menv.mk.statements)
     messages = [("user", _prompt.kernel_message_multi(menv))]
@@ -184,6 +191,8 @@ def run_dialogue_multi(menv, llm, max_iters=30, verbose=True):
             continue
         scheds = (blocks[-n:] if len(blocks) >= n else blocks + [""] * (n - len(blocks)))
         r = menv.evaluate(scheds)
+        if on_eval:
+            on_eval(" | ".join(s or "(identity)" for s in scheds), r["status"], r.get("speedup"))
         if r["status"] == "success" and r["speedup"] > best_sp:
             best_sp, best = r["speedup"], scheds
         if verbose:
@@ -213,7 +222,7 @@ def _moa_multi_feedback(sets, results, best, n):
             f"one per statement IN ORDER." + _feedback._CONTINUE)
 
 
-def run_dialogue_moa_multi(menv, references, aggregator, max_iters=30, verbose=True, tag=""):
+def run_dialogue_moa_multi(menv, references, aggregator, max_iters=30, verbose=True, tag="", on_eval=None):
     """Mixture-of-Agents (pool & measure) for multi-statement / stencil kernels.
 
     Each agent proposes one COMPLETE schedule set (n <schedule> blocks, one per
@@ -251,6 +260,8 @@ def run_dialogue_moa_multi(menv, references, aggregator, max_iters=30, verbose=T
         with ThreadPoolExecutor(max_workers=len(pool)) as ex:
             results = list(ex.map(menv.evaluate, pool))
         for st, r in zip(pool, results):
+            if on_eval:
+                on_eval(" | ".join(s or "(identity)" for s in st), r["status"], r.get("speedup"))
             if r["status"] == "success" and r.get("speedup") and r["speedup"] > best_sp:
                 best_sp, best = r["speedup"], st
         if verbose:
