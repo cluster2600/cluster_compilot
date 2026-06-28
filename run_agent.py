@@ -13,7 +13,8 @@ import argparse
 import sys
 
 from compilot.backend_isl import environment
-from compilot.agent import run_dialogue, run_dialogue_multi, best_of_k, run_dialogue_moa
+from compilot.agent import (run_dialogue, run_dialogue_multi, best_of_k,
+                            run_dialogue_moa, run_dialogue_moa_multi)
 from compilot.llm import GeminiClient, OpenAIClient, MockClient
 from compilot.kernels import MULTI_REGISTRY, STENCIL_REGISTRY
 from compilot.multikernel import MultiEnvironment
@@ -68,7 +69,15 @@ def main():
             kind = "multi-statement"
         print(f"kernel={args.kernel} ({kind}, {len(menv.mk.statements)} stmts)  "
               f"baseline={menv.baseline()['time']:.4f}s  driver={'mock' if args.mock else args.model}\n")
-        sp, best = run_dialogue_multi(menv, make(), max_iters=args.iters)
+        if args.moa:
+            refs = [make_client(s.strip(), args.base_url, temperature=0.9)
+                    for s in args.moa.split(",") if s.strip()]
+            agg_spec = args.aggregator or base_spec
+            agg = make_client(agg_spec, args.base_url, temperature=0.4)
+            print(f"MoA: {len(refs)} references [{args.moa}] -> aggregator [{agg_spec}]\n")
+            sp, best = run_dialogue_moa_multi(menv, refs, agg, max_iters=args.iters)
+        else:
+            sp, best = run_dialogue_multi(menv, make(), max_iters=args.iters)
         print(f"\n=== BEST {sp:.2f}x ===")
         for i, s in enumerate(best or []):
             print(f"  [stmt {i}] {s.strip() or '(identity)'}")
