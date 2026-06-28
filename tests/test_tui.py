@@ -13,7 +13,7 @@ from compilot.tui import _State, _worker
 
 def _run(**kw):
     args = SimpleNamespace(kernel="gemm", backend="mock", model="x", iters=6,
-                           candidates=3, base_url="", moa="", aggregator="")
+                           candidates=3, base_url="", moa="", aggregator="", size="LARGE")
     args.__dict__.update(kw)
     st = _State()
     _worker(st, args)
