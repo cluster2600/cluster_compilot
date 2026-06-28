@@ -13,6 +13,7 @@ CASES = {
     "jacobi1d": ["parallel(i)", "parallel(i)"],
     "jacobi2d": ["tile2d(i,j,64,64)\nparallel(i_t)", "tile2d(i,j,64,64)\nparallel(i_t)"],
     "seidel2d": ["skew(j,i,1)"],   # jacobi parallelizes; seidel needs skewing
+    "heat3d": ["parallel(i)", "parallel(i)"],   # 3-D Jacobi: spatial loops fully parallel
 }
 
 if __name__ == "__main__":

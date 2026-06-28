@@ -42,27 +42,26 @@ class StencilKernel:
 
 
 def _emit(sk, scheds):
+    # rank-agnostic: arrays of any rank flatten via the product of their dims, so
+    # the same emitter handles 1-D (jacobi-1d), 2-D (jacobi/seidel) and 3-D
+    # (heat-3d). Spatial bodies already carry explicit flat indexing.
+    tot = lambda a: "*".join(str(x) for x in sk.arrays[a])
+    pat = "(double)((f_*13+7)%97)/97.0"
     sizes = "\n".join(f"  const int {k} = {v};" for k, v in sk.sizes.items())
-    allocs = "\n".join(f"  double *{a} = malloc((size_t){d[0]}*{d[1]}*sizeof(double));"
-                       for a, d in sk.arrays.items())
+    allocs = "\n".join(f"  double *{a} = malloc((size_t)({tot(a)})*sizeof(double));"
+                       for a in sk.arrays)
     reset_keys = set(sk.reset)
-    inits = "\n".join(
-        f"  for (int r_=0;r_<{d0};r_++) for (int c_=0;c_<{d1};c_++) "
-        f"{a}[r_*{d1}+c_]=(double)(((r_*7+c_*13)%97))/97.0;"
-        for a, (d0, d1) in sk.arrays.items() if a not in reset_keys)
-    resets = []
-    for a, mode in sk.reset.items():
-        d0, d1 = sk.arrays[a]
-        rhs = "(double)(((r_*7+c_*13)%97))/97.0" if mode == "reinit" else "0.0"
-        resets.append(f"    for (int r_=0;r_<{d0};r_++) for (int c_=0;c_<{d1};c_++) {a}[r_*{d1}+c_]={rhs};")
-    resets = "\n".join(resets)
+    inits = "\n".join(f"  for (long f_=0;f_<(long)({tot(a)});f_++) {a}[f_]={pat};"
+                      for a in sk.arrays if a not in reset_keys)
+    resets = "\n".join(
+        f"    for (long f_=0;f_<(long)({tot(a)});f_++) {a}[f_]={pat if mode == 'reinit' else '0.0'};"
+        for a, mode in sk.reset.items())
     spatial = []
     for s, sched in zip(sk.statements, scheds):
         fake = _Kernelish(s.loops, s.body)
         levels = _cg._build_levels(fake, _schedule.parse(sched) if sched.strip() else [])
         spatial.append(_cg._emit_nest(fake, levels, indent="      "))
     spatial = "\n".join(spatial)
-    fd0, fd1 = sk.arrays[sk.final]
     return f"""#include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -86,7 +85,7 @@ int main(void){{
     double dt=(t1.tv_sec-t0.tv_sec)+(t1.tv_nsec-t0.tv_nsec)*1e-9;
     if(dt<best)best=dt;
   }}
-  double sum=0; for(int x=0;x<{fd0};x++) for(int y=0;y<{fd1};y++) sum+={sk.final}[x*{fd1}+y];
+  double sum=0; for(long f_=0;f_<(long)({tot(sk.final)});f_++) sum+={sk.final}[f_];
   printf("TIME %.6f\\nCHECKSUM %.6e\\n", best, sum);
   return 0;
 }}

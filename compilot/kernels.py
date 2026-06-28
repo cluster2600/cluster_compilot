@@ -405,7 +405,32 @@ def _doitgen():
 
 MULTI_REGISTRY["doitgen"] = _doitgen
 
-STENCIL_REGISTRY = {"jacobi1d": _jacobi1d, "jacobi2d": _jacobi2d, "seidel2d": _seidel2d}
+def _heat3d():
+    """3-D heat equation: two Jacobi-style sweeps (A->B, B->A) over the N^3 interior.
+    Each sweep writes one buffer reading the other, so the spatial loops are fully
+    parallel (parallel(i)/tile3d legal) — it's jacobi-2d in one more dimension."""
+    from .stencil import SStmt, StencilKernel
+    N, T = 64, 40
+    d = "1<=i<N-1 and 1<=j<N-1 and 1<=k<N-1"
+    loops = [("i", "1", "N-1"), ("j", "1", "N-1"), ("k", "1", "N-1")]
+
+    def sweep(dst, src):
+        c = lambda di, dj, dk: (f"{src}[({'i'+di})*N*N+({'j'+dj})*N+({'k'+dk})]")
+        body = (f"{dst}[i*N*N+j*N+k] = "
+                f"0.125*({c('+1','','')}-2.0*{c('','','')}+{c('-1','','')})"
+                f"+0.125*({c('','+1','')}-2.0*{c('','','')}+{c('','-1','')})"
+                f"+0.125*({c('','','+1')}-2.0*{c('','','')}+{c('','','-1')})"
+                f"+{c('','','')};")
+        return SStmt(loops, body,
+                     PolyKernel(dst, ["i", "j", "k"], d, [(dst, "i,j,k")], [(src, "i,j,k")], ["N"]))
+
+    return StencilKernel("heat3d", {"N": N, "TSTEPS": T}, {"A": ("N", "N", "N"), "B": ("N", "N", "N")},
+                         [sweep("B", "A"), sweep("A", "B")],
+                         reset={"A": "reinit", "B": "reinit"}, final="A")
+
+
+STENCIL_REGISTRY = {"jacobi1d": _jacobi1d, "jacobi2d": _jacobi2d, "seidel2d": _seidel2d,
+                    "heat3d": _heat3d}
 
 
 # ---- PolyBench size classes (the ×5 instance dimension) --------------------
