@@ -9,5 +9,9 @@ dependencies = [
     "certifi",         # CA bundle for HTTPS on macOS python.org builds
 ]
 
+[project.scripts]
+compilot-mcp = "compilot.mcp_server:main"   # MCP server (Claude Code / Codex)
+compilot-tui = "compilot.tui:run"           # live TUI monitor
+
 [tool.setuptools]
 packages = ["compilot"]
