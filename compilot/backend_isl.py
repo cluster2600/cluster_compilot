@@ -56,6 +56,8 @@ class Environment:
         self.D = dependences(poly_kernel)
         self._baseline = None
         self._baseline_lock = threading.Lock()
+        self._cache = {}                          # schedule key -> Result (shared across the search)
+        self._cache_lock = threading.Lock()
 
     def baseline(self):
         # Compiled once and shared across concurrent runs. Pre-warm by calling this
@@ -72,6 +74,21 @@ class Environment:
         return self._baseline
 
     def evaluate(self, schedule_text) -> Result:
+        """Memoized: the same schedule (whitespace-insensitive) is compiled and timed
+        once, then its Result is reused across the whole parallel search. Skips the
+        redundant clang compile + timed run when runs/candidates re-propose a schedule."""
+        key = "".join(schedule_text.split())
+        with self._cache_lock:
+            hit = self._cache.get(key)
+        if hit is not None:
+            return hit
+        result = self._evaluate(schedule_text)
+        with self._cache_lock:
+            # ponytail: a rare duplicate compile if two threads miss at once; setdefault
+            # makes them converge on one stored Result rather than locking the whole eval.
+            return self._cache.setdefault(key, result)
+
+    def _evaluate(self, schedule_text) -> Result:
         try:
             ops = _schedule.parse(schedule_text)
         except ValueError as e:

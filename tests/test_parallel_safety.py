@@ -2,9 +2,13 @@
 
 islpy builds objects in a process-global, non-thread-safe context, so evaluate()
 guards its polyhedral section with a lock. This hammers a shared environment with
-many concurrent evaluate() calls and asserts every schedule's legality verdict
-matches the serial reference (speedups jitter, so we compare *status*). A missing
-or broken lock shows up here as a crash, a hang, or a mismatched status.
+many concurrent calls and asserts every schedule's legality verdict matches the
+serial reference (speedups jitter, so we compare *status*). A missing or broken
+lock shows up here as a crash, a hang, or a mismatched status.
+
+evaluate() now memoizes by schedule, so the hammer calls the uncached _evaluate
+directly — otherwise every call past the first would hit the cache and never
+re-enter the locked section. A separate check covers the cache itself.
 """
 from concurrent.futures import ThreadPoolExecutor
 
@@ -26,15 +30,17 @@ def main():
     env = environment("gemm")
     env.baseline()                                        # pre-warm before fan-out
 
-    serial = {s: env.evaluate(s).status for s in SCHEDULES}
+    serial = {s: env._evaluate(s).status for s in SCHEDULES}    # uncached reference
 
     # Hammer: many rounds, each evaluating every schedule concurrently with high
-    # worker count so multiple threads sit in the polyhedral section at once.
+    # worker count so multiple threads sit in the polyhedral section at once. Call
+    # the uncached _evaluate so every call re-enters the locked section (the public
+    # evaluate would memoize after the first hit and stop stressing the lock).
     work = SCHEDULES * 8
     mismatches = 0
     for rnd in range(6):
         with ThreadPoolExecutor(max_workers=16) as ex:
-            out = list(ex.map(lambda s: (s, env.evaluate(s).status), work))
+            out = list(ex.map(lambda s: (s, env._evaluate(s).status), work))
         for s, status in out:
             if status != serial[s]:
                 mismatches += 1
@@ -45,6 +51,14 @@ def main():
     assert mismatches == 0, f"{mismatches} parallel/serial status mismatches"
     print(f"\nOK: {len(work) * 6} concurrent evaluate() calls, 0 mismatches, "
           f"verdicts identical to serial.")
+
+    # Memoization: the public evaluate() returns one shared Result per schedule,
+    # whitespace-insensitive, so duplicate proposals skip the clang compile + run.
+    a = env.evaluate("reorder(i, k, j)")
+    b = env.evaluate("reorder(i,k,j)\n")
+    assert a is b, "memoized evaluate() should return the same Result for the same schedule"
+    assert a.status == env._evaluate("reorder(i,k,j)").status, "cached verdict diverged from uncached"
+    print(f"OK: evaluate() memoized (whitespace-insensitive); {len(env._cache)} unique schedules cached.")
 
 
 if __name__ == "__main__":
