@@ -44,7 +44,7 @@ def _worker(state, args):
         from .agent import (run_dialogue, run_dialogue_multi,
                             run_dialogue_moa, run_dialogue_moa_multi)
         from .backend_isl import environment
-        from .kernels import MULTI_REGISTRY, STENCIL_REGISTRY
+        from .kernels import MULTI_REGISTRY, STENCIL_REGISTRY, sized_kernel
         from .mcp_server import _make_client
         from .multikernel import MultiEnvironment
         from .stencil import StencilEnvironment
@@ -59,8 +59,8 @@ def _worker(state, args):
         agg = _make_client(args.aggregator or base_spec, args.base_url, 0.4) if args.moa else None
 
         if args.kernel in MULTI_REGISTRY or args.kernel in STENCIL_REGISTRY:   # >1 statement
-            menv = (StencilEnvironment(STENCIL_REGISTRY[args.kernel]()) if args.kernel in STENCIL_REGISTRY
-                    else MultiEnvironment(MULTI_REGISTRY[args.kernel]()))
+            menv = (StencilEnvironment(sized_kernel(args.kernel, args.size)) if args.kernel in STENCIL_REGISTRY
+                    else MultiEnvironment(sized_kernel(args.kernel, args.size)))
             if args.moa:
                 sp, best = run_dialogue_moa_multi(menv, refs, agg, max_iters=args.iters,
                                                   verbose=False, on_eval=on_eval)
@@ -69,7 +69,7 @@ def _worker(state, args):
                                               max_iters=args.iters, verbose=False, on_eval=on_eval)
             sched = " | ".join(f"[{i}] {s.strip() or 'id'}" for i, s in enumerate(best or []))
         else:                                                                 # single statement
-            env = environment(args.kernel)
+            env = environment(args.kernel, args.size)
             if args.moa:
                 sp, sched, _ = run_dialogue_moa(env, refs, agg, max_iters=args.iters, verbose=False,
                                                 candidates_per_turn=args.candidates, on_eval=on_eval)
@@ -198,6 +198,9 @@ def run():
                                               "reference specs, e.g. 'gemini:gemini-2.5-flash,local:qwen2.5-coder:32b'")
     ap.add_argument("--aggregator", default="", help="MoA aggregator spec (default: backend:model)")
     ap.add_argument("--base-url", default="http://localhost:11434/v1")
+    ap.add_argument("--size", default="LARGE",
+                    choices=["MINI", "SMALL", "MEDIUM", "LARGE", "EXTRALARGE"],
+                    help="PolyBench dataset size class")
     args = ap.parse_args()
 
     from .kernels import REGISTRY, MULTI_REGISTRY, STENCIL_REGISTRY

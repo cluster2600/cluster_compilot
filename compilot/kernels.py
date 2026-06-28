@@ -9,7 +9,7 @@ These are single-statement kernels (output zeroed, then an accumulation nest):
 GEMM (C=A·B), SYRK (C=A·Aᵀ), SYR2K (C=A·Bᵀ+B·Aᵀ). Multi-statement PolyBench
 kernels arrive with the multi-statement polyhedral model.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from .polyhedral import PolyKernel
 
 
@@ -310,9 +310,38 @@ def _covariance():
     return MultiKernel("covariance", {"N": N, "M": M}, arrays, [s1, s2, s3], "cov")
 
 
+def _correlation():
+    """Datamining: mean -> variance -> stddev (sqrt+guard) -> normalize (in-place)
+    -> correlation (triangular matmul). Same shape as covariance with the extra
+    stddev normalization; PolyBench's diagonal corr[i][i]=1 falls out of the
+    normalized data so no special-case statement is needed."""
+    from .multikernel import MStmt, MultiKernel
+    N, M = 600, 600                       # N samples, M features
+    arrays = {"data": ("N", "M"), "mean": ("M", 1), "var": ("M", 1),
+              "stddev": ("M", 1), "corr": ("M", "M")}
+    s1 = MStmt([("j", "M"), ("i", "N")], "mean[j] += data[i*M+j]/(double)N;", "mean", reduction={"i"},
+               poly=PolyKernel("mean", ["j", "i"], "0<=j<M and 0<=i<N",
+                               [("mean", "j")], [("data", "i,j"), ("mean", "j")], ["N", "M"]))
+    s2 = MStmt([("j", "M"), ("i", "N")],
+               "var[j] += (data[i*M+j]-mean[j])*(data[i*M+j]-mean[j])/(double)N;", "var", reduction={"i"},
+               poly=PolyKernel("var", ["j", "i"], "0<=j<M and 0<=i<N",
+                               [("var", "j")], [("data", "i,j"), ("mean", "j"), ("var", "j")], ["N", "M"]))
+    s3 = MStmt([("j", "M")], "stddev[j] = sqrt(var[j]); if (stddev[j] <= 1e-9) stddev[j] = 1.0;", "stddev",
+               poly=PolyKernel("stddev", ["j"], "0<=j<M", [("stddev", "j")], [("var", "j")], ["M"]))
+    s4 = MStmt([("i", "N"), ("j", "M")],
+               "data[i*M+j] = (data[i*M+j]-mean[j])/(sqrt((double)N)*stddev[j]);", "data", reset="reinit",
+               poly=PolyKernel("data", ["i", "j"], "0<=i<N and 0<=j<M",
+                               [("data", "i,j")], [("data", "i,j"), ("mean", "j"), ("stddev", "j")], ["N", "M"]))
+    s5 = MStmt([("i", "M"), ("j", "i+1"), ("k", "N")], "corr[i*M+j] += data[k*M+i]*data[k*M+j];", "corr",
+               reduction={"k"},
+               poly=PolyKernel("corr", ["i", "j", "k"], "0<=i<M and 0<=j<=i and 0<=k<N",
+                               [("corr", "i,j")], [("data", "k,i"), ("data", "k,j"), ("corr", "i,j")], ["N", "M"]))
+    return MultiKernel("correlation", {"N": N, "M": M}, arrays, [s1, s2, s3, s4, s5], "corr")
+
+
 MULTI_REGISTRY = {"2mm": _twomm, "3mm": _3mm, "mvt": _mvt, "atax": _atax,
                   "bicg": _bicg, "gesummv": _gesummv, "gemver": _gemver,
-                  "covariance": _covariance}
+                  "covariance": _covariance, "correlation": _correlation}
 
 
 # ---- stencils: a sequential time loop over scheduled spatial sweeps ---------
@@ -377,3 +406,40 @@ def _doitgen():
 MULTI_REGISTRY["doitgen"] = _doitgen
 
 STENCIL_REGISTRY = {"jacobi1d": _jacobi1d, "jacobi2d": _jacobi2d, "seidel2d": _seidel2d}
+
+
+# ---- PolyBench size classes (the ×5 instance dimension) --------------------
+# PolyBench/C ships five standard dataset sizes per kernel. Legality is size-
+# independent (domains are symbolic in N/M/K), so a size class only rescales the
+# concrete loop bounds the codegen substitutes. The repo's defaults are LARGE.
+# ponytail: uniform linear scale of every dim, not PolyBench's exact per-kernel
+# NI/NJ/... tables — swap explicit tuples in here if benchmark-faithful sizes
+# matter; the ×5 instance structure and the scheduling problem are identical.
+SIZE_CLASSES = {"MINI": 1 / 16, "SMALL": 1 / 8, "MEDIUM": 1 / 4, "LARGE": 1.0, "EXTRALARGE": 2.0}
+
+
+def _scale(sizes, f):
+    return {k: max(2, round(v * f)) for k, v in sizes.items()}
+
+
+def sized_kernel(name, size="LARGE"):
+    """Kernel object(s) for `name` with loop bounds rescaled to a PolyBench size class.
+
+    Single-statement -> (exec_kernel, poly_kernel); multi/stencil -> the
+    (Multi|Stencil)Kernel. `size` defaults to LARGE (the registry's own sizes),
+    so existing callers are unaffected.
+    """
+    if size not in SIZE_CLASSES:
+        raise ValueError(f"unknown size class {size!r}; pick one of {sorted(SIZE_CLASSES)}")
+    f = SIZE_CLASSES[size]
+    if name in REGISTRY:
+        ek, pk = REGISTRY[name]
+        return replace(ek, sizes=_scale(ek.sizes, f)), replace(pk, sizes=_scale(pk.sizes, f))
+    if name in STENCIL_REGISTRY:
+        sk = STENCIL_REGISTRY[name]()
+    elif name in MULTI_REGISTRY:
+        sk = MULTI_REGISTRY[name]()
+    else:
+        raise KeyError(name)
+    sk.sizes = _scale(sk.sizes, f)        # fresh object per call -> safe to mutate
+    return sk

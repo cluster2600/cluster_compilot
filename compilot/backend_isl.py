@@ -31,10 +31,10 @@ _ISL_LOCK = threading.Lock()
 _EXECUTABLE = {"interchange", "reorder", "tile", "tile2d", "tile3d", "parallel", "unroll", "reverse", "skew"}
 
 
-def environment(name):
-    """Build an Environment for a registered kernel name."""
-    from .kernels import REGISTRY
-    ek, pk = REGISTRY[name]
+def environment(name, size="LARGE"):
+    """Build an Environment for a registered kernel name at a PolyBench size class."""
+    from .kernels import sized_kernel
+    ek, pk = sized_kernel(name, size)
     return Environment(ek, pk)
 
 

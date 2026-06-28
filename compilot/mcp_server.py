@@ -37,6 +37,9 @@ TOOLS = [
             "properties": {
                 "kernel": {"type": "string", "description": "single-statement kernel name"},
                 "schedule": {"type": "string", "description": "transform DSL, one transform per line"},
+                "size": {"type": "string",
+                         "enum": ["MINI", "SMALL", "MEDIUM", "LARGE", "EXTRALARGE"],
+                         "default": "LARGE", "description": "PolyBench dataset size class"},
             },
             "required": ["kernel", "schedule"],
         },
@@ -61,6 +64,9 @@ TOOLS = [
                         "description": "comma-separated MoA reference specs; empty = single model"},
                 "aggregator": {"type": "string", "default": ""},
                 "base_url": {"type": "string", "default": "http://localhost:11434/v1"},
+                "size": {"type": "string",
+                         "enum": ["MINI", "SMALL", "MEDIUM", "LARGE", "EXTRALARGE"],
+                         "default": "LARGE", "description": "PolyBench dataset size class (×5 instances)"},
             },
             "required": ["kernel"],
         },
@@ -90,23 +96,23 @@ def _list_kernels():
             "stencil": sorted(STENCIL_REGISTRY)}
 
 
-def _check_legality(kernel, schedule):
+def _check_legality(kernel, schedule, size="LARGE"):
     from .backend_isl import environment
     from .kernels import REGISTRY
     if kernel not in REGISTRY:
         return {"error": f"{kernel!r} is multi-statement/stencil or unknown. check_legality "
                          f"supports single-statement kernels {sorted(REGISTRY)}; use optimize "
                          f"for the rest."}
-    r = environment(kernel).evaluate(schedule)
+    r = environment(kernel, size).evaluate(schedule)
     return {"status": r.status, "speedup": r.speedup, "detail": r.detail}
 
 
 def _optimize(kernel, backend="mock", model="gemini-2.5-flash", iters=8, candidates=3,
-              moa="", aggregator="", base_url="http://localhost:11434/v1"):
+              moa="", aggregator="", base_url="http://localhost:11434/v1", size="LARGE"):
     from .agent import (run_dialogue, run_dialogue_multi, run_dialogue_moa,
                         run_dialogue_moa_multi)
     from .backend_isl import environment
-    from .kernels import MULTI_REGISTRY, STENCIL_REGISTRY
+    from .kernels import MULTI_REGISTRY, STENCIL_REGISTRY, sized_kernel
     from .multikernel import MultiEnvironment
     from .stencil import StencilEnvironment
 
@@ -114,8 +120,8 @@ def _optimize(kernel, backend="mock", model="gemini-2.5-flash", iters=8, candida
     refs = [_make_client(s.strip(), base_url, 0.9) for s in moa.split(",") if s.strip()] if moa else []
 
     if kernel in MULTI_REGISTRY or kernel in STENCIL_REGISTRY:
-        menv = (StencilEnvironment(STENCIL_REGISTRY[kernel]()) if kernel in STENCIL_REGISTRY
-                else MultiEnvironment(MULTI_REGISTRY[kernel]()))
+        menv = (StencilEnvironment(sized_kernel(kernel, size)) if kernel in STENCIL_REGISTRY
+                else MultiEnvironment(sized_kernel(kernel, size)))
         if moa:
             agg = _make_client(aggregator or base_spec, base_url, 0.4)
             sp, best = run_dialogue_moa_multi(menv, refs, agg, max_iters=iters, verbose=False)
@@ -124,7 +130,7 @@ def _optimize(kernel, backend="mock", model="gemini-2.5-flash", iters=8, candida
                                           verbose=False)
         sched = "\n".join(f"[stmt {i}] {s.strip() or '(identity)'}" for i, s in enumerate(best or []))
     else:
-        env = environment(kernel)
+        env = environment(kernel, size)
         if moa:
             agg = _make_client(aggregator or base_spec, base_url, 0.4)
             sp, sched, _ = run_dialogue_moa(env, refs, agg, max_iters=iters, verbose=False,
@@ -139,13 +145,13 @@ def _call_tool(name, args):
     if name == "list_kernels":
         return _list_kernels()
     if name == "check_legality":
-        return _check_legality(args["kernel"], args["schedule"])
+        return _check_legality(args["kernel"], args["schedule"], args.get("size", "LARGE"))
     if name == "optimize":
         return _optimize(
             args["kernel"], args.get("backend", "mock"), args.get("model", "gemini-2.5-flash"),
             int(args.get("iters", 8)), int(args.get("candidates", 3)),
             args.get("moa", ""), args.get("aggregator", ""),
-            args.get("base_url", "http://localhost:11434/v1"))
+            args.get("base_url", "http://localhost:11434/v1"), args.get("size", "LARGE"))
     raise ValueError(f"unknown tool {name!r}")
 
 
