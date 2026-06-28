@@ -132,9 +132,11 @@ def generate_c(kernel, schedule_text=""):
     rhs = (f"(double)(((x*7 + y*13) % 97)) / 97.0" if kernel.reset == "reinit" else "0.0")
     zero = (f"    for (int x = 0; x < {od0}; x++) for (int y = 0; y < {od1}; y++) "
             f"{kernel.output}[x*{od1} + y] = {rhs};")
+    # position-weighted: an unweighted sum is permutation-invariant, so a transposed/
+    # mirrored write that hits the right *values* in the wrong *cells* would pass.
     checksum = (f"  double sum = 0.0;\n"
                 f"  for (int x = 0; x < {od0}; x++) for (int y = 0; y < {od1}; y++) "
-                f"sum += {kernel.output}[x*{od1} + y];")
+                f"sum += (x*{od1} + y + 1) * {kernel.output}[x*{od1} + y];")
     frees = "\n".join(f"  free({a});" for a in kernel.arrays)
 
     return f"""#include <stdio.h>

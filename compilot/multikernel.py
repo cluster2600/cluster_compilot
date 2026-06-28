@@ -56,6 +56,12 @@ def _emit_program(mk, scheds):
                        for a in mk.arrays)
     inits = "\n".join(f"  for (long f_=0;f_<(long)({tot(a)});f_++) {a}[f_]=(double)((f_*13+7)%97)/97.0;"
                       for a in mk.arrays if a not in outputs)
+    # reset="none" outputs are never reset inside the rep loop; zero them once so the
+    # accumulation starts from a clean, deterministic slate instead of malloc garbage.
+    none_outputs = list(dict.fromkeys(o for s in mk.statements if s.reset == "none"
+                                      for o in (s.output, *s.extra_outputs)))
+    inits += "\n" + "\n".join(f"  for (long f_=0;f_<(long)({tot(a)});f_++) {a}[f_]=0.0;"
+                              for a in none_outputs)
 
     body_lines = []
     for s, sched in zip(mk.statements, scheds):
@@ -69,9 +75,11 @@ def _emit_program(mk, scheds):
         body_lines.append(_cg._emit_nest(fake, levels, indent="    "))
 
     nest = "\n".join(body_lines)
-    csum = ["  double acc_=0;"]
+    # position-weighted via a globally-incrementing weight w_ across all outputs, so a
+    # transposed/mirrored write (right values, wrong cells) changes the checksum.
+    csum = ["  double acc_=0; long w_=0;"]
     for a in sorted(outputs):
-        csum.append(f"  for (long f_=0;f_<(long)({tot(a)});f_++) acc_+={a}[f_];")
+        csum.append(f"  for (long f_=0;f_<(long)({tot(a)});f_++) acc_+=(double)(++w_)*{a}[f_];")
     checksum = "\n".join(csum)
     frees = "\n".join(f"  free({a});" for a in mk.arrays)
     return f"""#include <stdio.h>
@@ -145,5 +153,5 @@ class MultiEnvironment:
             return {"status": r["error"], "speedup": None, "detail": r.get("detail", "")}
         if abs(r["checksum"] - base["checksum"]) > 1e-6 * max(1.0, abs(base["checksum"])):
             return {"status": "incorrect", "speedup": None}
-        return {"status": "success", "speedup": base["time"] / r["time"],
+        return {"status": "success", "speedup": base["time"] / max(r["time"], 1e-9),
                 "detail": f"{base['time']:.4f}s -> {r['time']:.4f}s"}

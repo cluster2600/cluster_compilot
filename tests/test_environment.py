@@ -8,19 +8,27 @@ from compilot.backend_isl import environment
 
 env = environment("gemm")
 
+# (name, schedule, expected status). Legal cases must run AND report a real speedup;
+# illegal ones must be rejected by the legality engine BEFORE execution.
 CASES = [
-    ("baseline (identity)",        ""),
-    ("reorder(i,k,j)",             "reorder(i, k, j)"),
-    ("tile2d + parallel",          "reorder(i, k, j)\ntile2d(i, j, 32, 32)\nparallel(i_t)"),
-    ("reverse(k)  [illegal]",      "reverse(k)"),
-    ("parallel(k) [illegal]",      "parallel(k)"),
+    ("baseline (identity)",        "",                                                    "success"),
+    ("reorder(i,k,j)",             "reorder(i, k, j)",                                    "success"),
+    ("tile2d + parallel",          "reorder(i, k, j)\ntile2d(i, j, 32, 32)\nparallel(i_t)", "success"),
+    ("reverse(k)  [illegal]",      "reverse(k)",                                          "illegal"),
+    ("parallel(k) [illegal]",      "parallel(k)",                                         "parallel_illegal"),
 ]
+
+
+def test_environment():
+    for name, sched, want in CASES:
+        r = env.evaluate(sched)
+        assert r.status == want, f"{name}: got {r.status} ({r.detail[:120]}), want {want}"
+        if want == "success":
+            assert r.speedup and r.speedup > 0, f"{name}: legal schedule had no speedup"
+        print(f"OK [{r.status:16}] {(f'{r.speedup:.2f}x' if r.speedup else '  -  '):>7}  {name}")
+
 
 if __name__ == "__main__":
     print(f"baseline time: {env.baseline()['time']:.4f}s\n")
-    for name, sched in CASES:
-        r = env.evaluate(sched)
-        sp = f"{r.speedup:.2f}x" if r.speedup else "  -  "
-        print(f"[{r.status:16}] {sp:>7}  {name}")
-        if r.status not in ("success", "illegal", "parallel_illegal"):
-            print(f"                  detail: {r.detail[:120]}")
+    test_environment()
+    print("\ntest_environment: all assertions passed")

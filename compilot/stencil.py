@@ -85,7 +85,7 @@ int main(void){{
     double dt=(t1.tv_sec-t0.tv_sec)+(t1.tv_nsec-t0.tv_nsec)*1e-9;
     if(dt<best)best=dt;
   }}
-  double sum=0; for(long f_=0;f_<(long)({tot(sk.final)});f_++) sum+={sk.final}[f_];
+  double sum=0; for(long f_=0;f_<(long)({tot(sk.final)});f_++) sum+=(double)(f_+1)*{sk.final}[f_];  // position-weighted: catches transposed/mirrored writes
   printf("TIME %.6f\\nCHECKSUM %.6e\\n", best, sum);
   return 0;
 }}
@@ -127,5 +127,5 @@ class StencilEnvironment:
             return {"status": r["error"], "speedup": None, "detail": r.get("detail", "")}
         if abs(r["checksum"] - base["checksum"]) > 1e-6 * max(1.0, abs(base["checksum"])):
             return {"status": "incorrect", "speedup": None}
-        return {"status": "success", "speedup": base["time"] / r["time"],
+        return {"status": "success", "speedup": base["time"] / max(r["time"], 1e-9),
                 "detail": f"{base['time']:.4f}s -> {r['time']:.4f}s"}

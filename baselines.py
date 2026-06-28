@@ -38,11 +38,12 @@ def main():
     print(f"{'kernel':16}{'naive':>9}{'ComPilot':>11}{'ratio':>9}")
     print("-" * 46)
     naive_all, comp_all = [], []
-    for name in SINGLE:
+    # only the kernels with a defined NAIVE baseline (a subset of bench's SINGLE/MULTI)
+    for name in NAIVE_SINGLE:
         n, c = sp_single(name, NAIVE_SINGLE[name]), sp_single(name, SINGLE[name])
         naive_all.append(n); comp_all.append(c)
         print(f"{name:16}{n:8.2f}x{c:10.2f}x{c/n:8.2f}x")
-    for name in MULTI:
+    for name in NAIVE_MULTI:
         n, c = sp_multi(name, NAIVE_MULTI[name]), sp_multi(name, MULTI[name])
         naive_all.append(n); comp_all.append(c)
         print(f"{name:16}{n:8.2f}x{c:10.2f}x{c/n:8.2f}x")

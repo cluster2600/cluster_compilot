@@ -47,7 +47,10 @@ def compile_and_run(c_code, threads=None, timeout=120):
             # glibc hides clock_gettime under -std=c11 without the POSIX feature macro.
             cc = ["clang", "-O3", "-std=c11", "-D_POSIX_C_SOURCE=199309L",
                   "-fopenmp", src, "-o", binp, "-lm"]
-        cp = subprocess.run(cc, capture_output=True, text=True, timeout=timeout)
+        try:
+            cp = subprocess.run(cc, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": "timeout", "detail": "compile timed out"}
         if cp.returncode != 0:
             return {"ok": False, "error": "compile_error", "detail": cp.stderr[-800:]}
         env = dict(os.environ)
@@ -55,8 +58,11 @@ def compile_and_run(c_code, threads=None, timeout=120):
             env["DYLD_LIBRARY_PATH"] = f"{omp}/lib:" + env.get("DYLD_LIBRARY_PATH", "")
         if threads:
             env["OMP_NUM_THREADS"] = str(threads)
-        with _RUN_LOCK:                       # serialize timed runs; see _RUN_LOCK
-            rp = subprocess.run([binp], capture_output=True, text=True, timeout=timeout, env=env)
+        try:
+            with _RUN_LOCK:                   # serialize timed runs; see _RUN_LOCK
+                rp = subprocess.run([binp], capture_output=True, text=True, timeout=timeout, env=env)
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": "timeout", "detail": "run timed out"}
         if rp.returncode != 0:
             return {"ok": False, "error": "runtime_error", "detail": rp.stderr[-800:]}
         t = re.search(r"TIME\s+([0-9.eE+-]+)", rp.stdout)

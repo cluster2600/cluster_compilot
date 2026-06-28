@@ -11,6 +11,7 @@ evaluate(schedule) does what Tiramisu does for ComPilot, via ISL + clang:
 Returns a Result whose `status` is one of the paper's feedback categories.
 """
 import threading
+import islpy as isl
 from dataclasses import dataclass
 from . import schedule as _schedule
 from . import codegen as _codegen
@@ -109,7 +110,8 @@ class Environment:
         with _ISL_LOCK:
             try:
                 theta, labels, par, unroll = build_theta(self.pk, ops)
-            except ValueError as e:
+            except (ValueError, IndexError, KeyError, isl.Error) as e:
+                # malformed schedule (too few args, bad loop name, non-numeric factor)
                 return Result("invalid", detail=str(e), schedule=schedule_text)
             legal, viol = is_legal(self.D, theta)
             if not legal:
@@ -134,5 +136,5 @@ class Environment:
             return Result("incorrect",
                           detail=f"checksum {r['checksum']:.6e} != baseline {ref:.6e} "
                                  f"(ISL said legal — codegen bug)", schedule=schedule_text)
-        return Result("success", speedup=base["time"] / r["time"],
+        return Result("success", speedup=base["time"] / max(r["time"], 1e-9),
                       detail=f"{base['time']:.4f}s -> {r['time']:.4f}s", schedule=schedule_text)

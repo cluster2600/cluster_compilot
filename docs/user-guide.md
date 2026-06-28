@@ -50,9 +50,9 @@ See [`npm/README.md`](../npm/README.md) for the Codex `config.toml` form and det
 ## Evaluate across kernels
 
 ```bash
-python3 eval.py --mock                     # deterministic, all kernels
-python3 eval.py --kernels gemm,syrk --k 3  # live Gemini, best-of-3
-python3 bench.py                           # deterministic benchmark (one schedule per kernel)
+python3 evaluate.py --mock                     # deterministic, all kernels (+ pool/CIs/cost)
+python3 evaluate.py --kernels gemm,syrk --k 3  # live Gemini, best-of-3
+python3 bench.py                               # deterministic benchmark (one schedule per kernel)
 ```
 
 ## Run the tests
@@ -96,4 +96,4 @@ MYK_POLY = PolyKernel(name="myk", order=["i","j","k"], domain="0<=i<N and ...",
 REGISTRY["myk"] = (MYK, MYK_POLY)
 ```
 
-The agent, `eval.py`, `bench.py`, and the legality engine all pick it up by name. Use `GEMM` / `GEMM_POLY` as the template. Multi-statement kernels use `compilot/polyhedral_multi.py`.
+The agent, `evaluate.py`, `bench.py`, and the legality engine all pick it up by name. Use `GEMM` / `GEMM_POLY` as the template. Multi-statement kernels use `compilot/polyhedral_multi.py`.
