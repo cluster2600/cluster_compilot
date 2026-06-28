@@ -5,6 +5,8 @@ no key. Both expose .chat(system, messages) and token counters (for RQ2 cost).
 import json
 import os
 import ssl
+import time
+import urllib.error
 import urllib.request
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
@@ -14,6 +16,32 @@ try:                                    # macOS python.org builds lack a system 
     _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 except ImportError:
     _SSL_CTX = ssl.create_default_context()
+
+
+def _http_post_json(url, payload, headers, timeout, retries=2, backoff=0.5):
+    """POST JSON and parse the JSON response, retrying transient failures (network
+    errors, timeouts, HTTP 5xx) with exponential backoff. HTTP 4xx is NOT retried —
+    a bad model name or malformed request won't fix itself — and is surfaced with
+    the server's own message. Raises RuntimeError with a readable reason on failure.
+    """
+    data = json.dumps(payload).encode()
+    last = None
+    for attempt in range(retries + 1):
+        try:
+            req = urllib.request.Request(url, data=data, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout, context=_SSL_CTX) as resp:
+                return json.load(resp)
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode(errors="replace")[:300]
+            if e.code < 500:                       # client error (e.g. 404 model not found): don't retry
+                raise RuntimeError(f"{url} returned HTTP {e.code}: {detail}") from None
+            last = f"HTTP {e.code}: {detail}"
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
+            last = getattr(e, "reason", e)
+        if attempt < retries:
+            time.sleep(backoff * 2 ** attempt)     # 0.5s, 1s, ...
+    raise RuntimeError(f"could not reach {url} after {retries + 1} tries: {last} "
+                       f"(is the server running and the model pulled?)")
 
 
 def _openai_messages(system, messages):
@@ -78,14 +106,12 @@ class OpenAIClient:
         headers = {"Content-Type": "application/json"}
         if self.key:
             headers["Authorization"] = f"Bearer {self.key}"
-        req = urllib.request.Request(
-            f"{self.base_url}/chat/completions",
-            data=json.dumps(body).encode(),
-            headers=headers,
-        )
-        with urllib.request.urlopen(req, timeout=600, context=_SSL_CTX) as resp:  # local models can be slow
-            out = json.load(resp)
-        text = out["choices"][0]["message"]["content"] or ""
+        out = _http_post_json(f"{self.base_url}/chat/completions", body,
+                              headers, timeout=600)        # local models can be slow
+        try:
+            text = out["choices"][0]["message"]["content"] or ""
+        except (KeyError, IndexError, TypeError):
+            raise RuntimeError(f"unexpected response from {self.base_url}: {str(out)[:300]}") from None
         u = out.get("usage", {})
         self.in_tokens += u.get("prompt_tokens", 0)
         self.out_tokens += u.get("completion_tokens", 0)

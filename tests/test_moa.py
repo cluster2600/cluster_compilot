@@ -9,7 +9,7 @@ the OpenAI role mapping, the one bit of local-client logic that fails silently.
 """
 from compilot.backend_isl import environment
 from compilot.agent import run_dialogue_moa
-from compilot.llm import MockClient, _openai_messages
+from compilot.llm import MockClient, _openai_messages, _http_post_json
 
 
 def test_openai_role_mapping():
@@ -20,6 +20,18 @@ def test_openai_role_mapping():
         {"role": "assistant", "content": "b"},   # 'model' -> 'assistant'
         {"role": "user", "content": "c"},
     ], got
+
+
+def test_local_client_unreachable_is_clear():
+    # OpenAIClient must degrade to a readable error, not a raw urllib traceback,
+    # when the local server is down. retries=0 keeps the check fast (no backoff sleep).
+    try:
+        _http_post_json("http://127.0.0.1:9/v1/chat/completions", {"model": "x"},
+                        {"Content-Type": "application/json"}, timeout=1, retries=0)
+        assert False, "expected RuntimeError on unreachable server"
+    except RuntimeError as e:
+        assert "could not reach" in str(e), e
+    print("OK: unreachable local server -> clear RuntimeError")
 
 
 def test_moa_pool_and_measure():
@@ -38,5 +50,6 @@ def test_moa_pool_and_measure():
 
 if __name__ == "__main__":
     test_openai_role_mapping()
+    test_local_client_unreachable_is_clear()
     test_moa_pool_and_measure()
     print("test_moa: all checks passed")
