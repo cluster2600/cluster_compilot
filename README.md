@@ -6,6 +6,10 @@ An off-the-shelf LLM acts as an agent that proposes loop transformations. A comp
 
 > **Status:** runs live. Gemini 2.5-flash + ISL legality + clang execution reach **42× on GEMM** end-to-end. We also build the **real Tiramisu compiler** and cross-validate our legality against it (**4/4**).
 
+**Live — the agent optimizing GEMM in the TUI monitor** (`compilot-tui`): the speedup leaderboard fills in as schedules are compiled and measured. 🌸
+
+![cluster_compilot TUI monitor — live search on GEMM](docs/images/tui_monitor.gif)
+
 ![architecture](docs/images/architecture.png)
 
 ## Documentation
@@ -68,6 +72,24 @@ Each model is a `backend:model` spec (`gemini:…`, `local:…`, `mock`; split o
 **Local models** use one OpenAI-compatible client (`compilot/llm.OpenAIClient`) against `/v1/chat/completions` — Ollama (`…/v1`), vLLM, NVIDIA NIM, LM Studio, llama.cpp. Point `--backend local --base-url` at the server, or mix providers per-agent via `--moa` specs. `OPENAI_API_KEY` is sent as a bearer token when set (unused by Ollama).
 
 See the [building guide](docs/building.md) and [user guide](docs/user-guide.md) for everything else (live keys, Tiramisu build, adding kernels).
+
+### MCP server + TUI monitor
+
+Two extra entry points (installed by `pip install -e .`):
+
+```bash
+compilot-tui --kernel gemm --candidates 4    # live curses monitor: speedup leaderboard + falling sakura 🌸
+compilot-tui --kernel 2mm --moa mock,mock --aggregator mock   # watch MoA fan-out (multi-statement)
+compilot-mcp                                  # MCP stdio server (Claude Code / Codex)
+```
+
+The **MCP server** (`compilot/mcp_server.py`, hand-rolled stdio JSON-RPC — no SDK dep) exposes three tools: `list_kernels`, `check_legality(kernel, schedule)` (ISL verdict + measured speedup, sub-second, no LLM), and `optimize(kernel, backend=mock, …)` (the full agent loop). Wire it into Claude Code or Codex via the npm launcher — see [`npm/README.md`](npm/README.md):
+
+```bash
+COMPILOT_PYTHON=$PWD/.venv/bin/python claude mcp add compilot -- npx -y @cluster2600/compilot-mcp
+```
+
+The **TUI** (`compilot/tui.py`, stdlib `curses`) watches the parallel search live via a lightweight `on_eval` hook on every runner — single-statement, multi-statement, and MoA fan-out all stream measured candidates into a top-speedups board while a maneki-neko waves on each new record. `--backend mock` runs offline; add `--moa <specs>` to watch the Mixture-of-Agents pool.
 
 ## Test results
 
