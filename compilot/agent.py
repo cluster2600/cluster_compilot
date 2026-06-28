@@ -193,6 +193,73 @@ def run_dialogue_multi(menv, llm, max_iters=30, verbose=True):
     return best_sp, best
 
 
+def _blocks_to_set(resp, n):
+    """Parse one agent response into a complete schedule set: n blocks in statement
+    order (last n proposed, padded with identity). None if it proposed nothing usable."""
+    blocks = [b.strip() for b in _SCHED.findall(resp) if _prompt.STOP_TOKEN not in b]
+    if not blocks:
+        return None
+    blocks = blocks[-n:]
+    return blocks + [""] * (n - len(blocks))
+
+
+def _moa_multi_feedback(sets, results, best, n):
+    lines = []
+    for i, (st, r) in enumerate(zip(sets, results)):
+        mark = f"{r['speedup']:.2f}x" if r.get("speedup") else r["status"]
+        lines.append(f"[set {i + 1}] {mark}: " + " | ".join(s or "(identity)" for s in st))
+    return ("Measured this turn:\n" + "\n".join(lines) +
+            f"\nBest so far {best:.2f}x. Each complete schedule is {n} <schedule> blocks, "
+            f"one per statement IN ORDER." + _feedback._CONTINUE)
+
+
+def run_dialogue_moa_multi(menv, references, aggregator, max_iters=30, verbose=True, tag=""):
+    """Mixture-of-Agents (pool & measure) for multi-statement / stencil kernels.
+
+    Each agent proposes one COMPLETE schedule set (n <schedule> blocks, one per
+    statement); the reference sets and the aggregator's are pooled, deduped, and each
+    set is compiled+measured by menv.evaluate in parallel. Best measured speedup wins.
+    Returns (best_speedup, best_set_or_None) — same shape as run_dialogue_multi.
+    """
+    n = len(menv.mk.statements)
+    lead = f"{tag}  " if tag else "  "
+    messages = [("user", _prompt.kernel_message_multi(menv))]
+    best_sp, best = 1.0, None
+    for it in range(max_iters):
+        with ThreadPoolExecutor(max_workers=len(references)) as ex:
+            ref_resps = list(ex.map(lambda c: c.chat(_prompt.SYSTEM, messages), references))
+        ref_sets = [s for s in (_blocks_to_set(r, n) for r in ref_resps) if s]
+        agg_resp = aggregator.chat(_prompt.SYSTEM,
+                                   messages + [("user", _prompt.moa_aggregator_hint_multi(ref_sets, n))])
+        if all(_prompt.STOP_TOKEN in r for r in ref_resps + [agg_resp]):
+            if verbose:
+                print(f"{lead}iter {it}: all agents stopped")
+            break
+        agg_set = _blocks_to_set(agg_resp, n)
+        pool, seen = [], set()                          # dedupe whole sets (whitespace-insensitive)
+        for st in ref_sets + ([agg_set] if agg_set else []):
+            key = tuple("".join(b.split()) for b in st)
+            if key in seen:
+                continue
+            seen.add(key)
+            pool.append(st)
+        messages.append(("model", agg_resp))
+        if not pool:
+            messages.append(("user", f"Provide {n} <schedule> blocks (one per statement)."
+                                      + _feedback._CONTINUE))
+            continue
+        with ThreadPoolExecutor(max_workers=len(pool)) as ex:
+            results = list(ex.map(menv.evaluate, pool))
+        for st, r in zip(pool, results):
+            if r["status"] == "success" and r.get("speedup") and r["speedup"] > best_sp:
+                best_sp, best = r["speedup"], st
+        if verbose:
+            summ = "  ".join((f"{r['speedup']:.2f}x" if r.get("speedup") else r["status"]) for r in results)
+            print(f"{lead}iter {it}: {len(references)} refs -> {len(pool)} sets [{summ}]  best={best_sp:.2f}x")
+        messages.append(("user", _moa_multi_feedback(pool, results, best_sp, n)))
+    return best_sp, best
+
+
 def best_of_k(env, make_llm, K=5, max_iters=30, verbose=True,
               candidates_per_turn=1, max_workers=None):
     """Run K independent dialogues concurrently; return the best plus per-run results.

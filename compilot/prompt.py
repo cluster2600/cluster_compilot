@@ -94,6 +94,22 @@ def moa_aggregator_hint(proposals, n):
             f"and measured in parallel, so explore complementary strategies.")
 
 
+def moa_aggregator_hint_multi(ref_sets, n):
+    """MoA aggregator guidance for multi-statement kernels: the references' complete
+    schedule sets this turn (one block per statement), to synthesize into one set."""
+    shown = []
+    for i, st in enumerate(ref_sets):
+        body = "\n".join(f"  stmt {j}: {b or '(identity)'}" for j, b in enumerate(st))
+        shown.append(f"[proposal {i + 1}]\n{body}")
+    if shown:
+        head = "Other agents proposed these complete schedules this turn:\n\n" + "\n\n".join(shown) + "\n\n"
+    else:
+        head = "The other agents proposed no complete schedule this turn.\n\n"
+    return (head + f"As the aggregator, synthesize the best ideas into ONE complete schedule: "
+            f"exactly {n} <schedule> blocks, one per statement IN ORDER. Every proposal "
+            f"(yours and theirs) is compiled and measured in parallel.")
+
+
 def kernel_message_multi(menv):
     from .multikernel import _Kernelish
     stmts = menv.mk.statements
