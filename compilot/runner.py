@@ -40,10 +40,13 @@ def compile_and_run(c_code, threads=None, timeout=120):
         binp = os.path.join(d, "k")
         with open(src, "w") as f:
             f.write(c_code)
-        cc = ["clang", "-O3", "-std=c11", "-Xclang", "-fopenmp", src, "-o", binp, "-lm"]
-        if omp:
-            cc[5:5] = [f"-I{omp}/include"]
-            cc += [f"-L{omp}/lib", "-lomp"]
+        if omp:   # macOS Homebrew libomp: Apple clang needs -Xclang + explicit libomp
+            cc = ["clang", "-O3", "-std=c11", "-Xclang", "-fopenmp", f"-I{omp}/include",
+                  src, "-o", binp, "-lm", f"-L{omp}/lib", "-lomp"]
+        else:     # Linux/LLVM clang: the -fopenmp driver flag enables AND links libomp.
+            # glibc hides clock_gettime under -std=c11 without the POSIX feature macro.
+            cc = ["clang", "-O3", "-std=c11", "-D_POSIX_C_SOURCE=199309L",
+                  "-fopenmp", src, "-o", binp, "-lm"]
         cp = subprocess.run(cc, capture_output=True, text=True, timeout=timeout)
         if cp.returncode != 0:
             return {"ok": False, "error": "compile_error", "detail": cp.stderr[-800:]}
