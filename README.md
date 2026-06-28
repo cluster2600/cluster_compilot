@@ -22,16 +22,50 @@ Full docs live in [`docs/`](docs/):
 
 ## Quick start
 
+Requires **Python 3.14+** (`islpy 2026.1` ships `cp314` wheels; see [Parallelism](#parallelism-python-314) below for why).
+
 ```bash
 git clone https://github.com/cluster2600/cluster_compilot.git
 cd cluster_compilot
-pip install -r requirements.txt        # islpy, certifi
+python3.14 -m venv .venv && . .venv/bin/activate
+pip install -e .                       # islpy, certifi (from pyproject; requires-python >=3.14)
 brew install libomp                    # OpenMP for clang (macOS)
 
 python3 -m tests.test_legality         # prove the legality oracle (10/10)
+python3 -m tests.test_parallel_safety  # parallel evaluate() == serial verdicts
 python3 run_agent.py --mock            # full agent loop, no API key
 python3 run_agent.py --iters 15        # live Gemini (key from env or OpenBao)
+python3 run_agent.py --k 5 --candidates 4   # parallel best-of-5, 4 candidate schedules/turn
+python3 run_agent.py --backend local --base-url http://localhost:11434/v1 \
+        --model qwen2.5-coder:32b           # any OpenAI-compatible server (Ollama/vLLM/NIM/LM Studio)
+python3 run_agent.py --moa "gemini:gemini-2.5-flash,local:qwen2.5-coder:32b" \
+        --aggregator gemini:gemini-2.5-pro  # Mixture of Agents (pool & measure)
 ```
+
+### Parallelism (Python 3.14)
+
+The search fans out across threads in two places:
+
+- **best-of-k** — the K independent dialogues run concurrently (`ThreadPoolExecutor`).
+- **candidates per turn** — `--candidates N` lets the LLM propose up to N schedules in one turn, compiled and measured in parallel.
+
+This scales on the **standard** interpreter because the heavy work releases the GIL: the LLM HTTP calls and the `clang` compile/run are I/O- and subprocess-bound. (Free-threaded `3.14t` is *not* used — `islpy` ships no `cp314t` wheel, and it would add little here since the in-process polyhedral work is a small slice.) Two locks keep this correct:
+
+- **legality lock** (`backend_isl._ISL_LOCK`) — islpy builds objects in a process-global, non-thread-safe ISL context, so the (fast) `build_theta`/`is_legal`/`is_parallel` section is serialized; compile/run stays outside it.
+- **measurement lock** (`runner._RUN_LOCK`) — only one *timed* binary executes at a time. Concurrent benchmark processes would contend for cores/caches and bias the very wall-clock speedup being optimized; compiles and LLM calls still overlap, so the search is parallel while the numbers stay trustworthy.
+
+### Mixture of Agents (`--moa`) + local models
+
+A third fan-out axis, in the spirit of [Hermes' Mixture of Agents](https://hermes-agent.nousresearch.com/docs/user-guide/features/mixture-of-agents): each turn, several **reference** models propose schedules in parallel and an **aggregator** model synthesizes its own informed by theirs. Unlike Hermes — which has no ground-truth evaluator and lets the aggregator pick — ComPilot is **pool & measure**: every proposal (references' and aggregator's) is deduped, compiled, and **measured** by the real oracle in parallel, and the best measured speedup wins. Diverse proposers, objective selection.
+
+```bash
+python3 run_agent.py --moa "gemini:gemini-2.5-flash,local:qwen2.5-coder:32b" \
+        --aggregator gemini:gemini-2.5-pro --candidates 2
+```
+
+Each model is a `backend:model` spec (`gemini:…`, `local:…`, `mock`; split on the first `:`, so Ollama tags like `qwen2.5-coder:32b` survive). References run hotter (0.9) for diversity, the aggregator cooler (0.4). MoA covers single-statement kernels; multi-statement kernels use the standard dialogue.
+
+**Local models** use one OpenAI-compatible client (`compilot/llm.OpenAIClient`) against `/v1/chat/completions` — Ollama (`…/v1`), vLLM, NVIDIA NIM, LM Studio, llama.cpp. Point `--backend local --base-url` at the server, or mix providers per-agent via `--moa` specs. `OPENAI_API_KEY` is sent as a bearer token when set (unused by Ollama).
 
 See the [building guide](docs/building.md) and [user guide](docs/user-guide.md) for everything else (live keys, Tiramisu build, adding kernels).
 
@@ -77,6 +111,8 @@ All suites pass; the benchmark is reproducible (`python3 bench.py`). Full output
 **Baseline:** `baselines.py` — **ComPilot vs naive auto-parallelization**: geomean **6.17× vs 3.31× → 1.86× faster** (matmul kernels 4.6–6.2× faster; matvec memory-bound, ~1.1–1.35×). Polyhedral **Pluto** itself does **not build** on this toolchain (Darwin-27/clang-22 rejects its bundled piplib's legacy K&R C — `conflicting types`/`unknown type name`; the LLVM-14 clang++ can't link C++), so naive auto-parallel is the proxy comparison.
 
 **Tiramisu backend — complete:** legality (ISL↔Tiramisu **4/4**) + Halide **codegen** (128 KB object) + **execution** (runs+times its own generated code via a Halide-buffer wrapper: tile2d+parallel → **1.7× measured by Tiramisu**).
+
+**Python 3.15:** forward-ready — `requires-python >=3.14` has no upper cap, and the suite is **deprecation-clean** (passes under `-W error::DeprecationWarning`, so nothing 3.15 removes is in use). The only blocker is upstream: `islpy` ships no `cp315` wheel yet (cp310–cp314 only), and a source build needs the ISL C library. Run `python3 check_py315.py` to probe PyPI for the wheel — when it flips to `READY`, `pip install -e .` should work on 3.15 unchanged. (Free-threaded `3.15t` additionally needs a `cp315t` wheel, same as the `3.14t` gap.)
 
 **Pending:**
 - **full PolyBench/C 4.2.1 (150 instances)** — **18/30 kernels**; **every computational pattern works** (matmul, matvec, reduction, triangular, multi-statement, fusion, in-place, datamining, time-stepped stencils, **3-D**). The remaining ~12 are loop-carried *solvers* (cholesky/lu/ludcmp/trisolv/durbin — need imperfect-nest codegen) and complex stencils (heat-3d/fdtd-2d/adi), correlation; plus the ×5 size classes

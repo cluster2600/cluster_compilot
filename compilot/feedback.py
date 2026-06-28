@@ -8,6 +8,20 @@ _CONTINUE = ("\nIf a better schedule may exist, propose it. Otherwise output "
              "<schedule>no_further_transformations</schedule>.")
 
 
+def format_candidates_feedback(scheds, results, best_so_far):
+    """One feedback message summarizing a parallel batch of candidate schedules."""
+    lines = [f"You proposed {len(scheds)} candidates; all were evaluated in parallel:"]
+    for i, (sc, r) in enumerate(zip(scheds, results)):
+        one = "; ".join(p.strip() for p in sc.splitlines() if p.strip()) or "(identity)"
+        if r.status == "success":
+            lines.append(f"  [{i}] {r.speedup:.2f}x  {one}  ({r.detail})")
+        else:
+            lines.append(f"  [{i}] {r.status}: {r.detail}  [{one}]")
+    lines.append(f"Best so far: {best_so_far:.2f}x. Refine from the strongest candidate, "
+                 f"or explore a new direction.")
+    return "\n".join(lines) + _CONTINUE
+
+
 def format_feedback(result, best_so_far=None):
     s = result.status
     if s == "success":

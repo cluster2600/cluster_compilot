@@ -9,8 +9,16 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 
 _OMP = None
+
+# Only one timed binary executes at a time, even when many candidates / best-of-k
+# runs are evaluated in parallel. Concurrent benchmark processes contend for cores
+# and caches and would bias the very wall-clock speedup the agent optimizes for.
+# Compilation and the LLM calls still overlap freely — only the measurement is
+# serialized — so the search is parallel while the numbers stay trustworthy.
+_RUN_LOCK = threading.Lock()
 
 
 def _libomp_prefix():
@@ -44,7 +52,8 @@ def compile_and_run(c_code, threads=None, timeout=120):
             env["DYLD_LIBRARY_PATH"] = f"{omp}/lib:" + env.get("DYLD_LIBRARY_PATH", "")
         if threads:
             env["OMP_NUM_THREADS"] = str(threads)
-        rp = subprocess.run([binp], capture_output=True, text=True, timeout=timeout, env=env)
+        with _RUN_LOCK:                       # serialize timed runs; see _RUN_LOCK
+            rp = subprocess.run([binp], capture_output=True, text=True, timeout=timeout, env=env)
         if rp.returncode != 0:
             return {"ok": False, "error": "runtime_error", "detail": rp.stderr[-800:]}
         t = re.search(r"TIME\s+([0-9.eE+-]+)", rp.stdout)

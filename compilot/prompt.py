@@ -65,6 +65,35 @@ First, analyze the nest: identify each loop's role, data dependencies, and which
 loops can be parallelized or reordered. Then propose your first schedule."""
 
 
+def multi_candidate_hint(n):
+    """Appended to the first message when the dialogue evaluates N candidates per turn."""
+    return (
+        f"\n\n# Parallel evaluation (this session)\n"
+        f"You may propose up to {n} DISTINCT candidate schedules in a single turn, each "
+        f"in its OWN <schedule> block. They are compiled and measured in parallel and you "
+        f"receive every result, so use the turn to EXPLORE different strategies at once "
+        f"(e.g. different loop orders, tile sizes, or which loop to parallelize) rather "
+        f"than proposing just one. Each block is still a COMPLETE schedule from the "
+        f"original nest. When no further useful transformation exists, output a single "
+        f"<schedule>{STOP_TOKEN}</schedule>."
+    )
+
+
+def moa_aggregator_hint(proposals, n):
+    """Per-turn guidance for the Mixture-of-Agents aggregator: the reference agents'
+    raw schedule proposals this turn, to synthesize/improve on."""
+    uniq = [p for p in dict.fromkeys(p.strip() for p in proposals) if p]
+    if uniq:
+        listed = "\n\n".join(f"[candidate {i + 1}]\n{p}" for i, p in enumerate(uniq))
+        head = f"Other optimization agents proposed these schedules this turn:\n\n{listed}\n\n"
+    else:
+        head = "The other agents proposed no parseable schedule this turn.\n\n"
+    return (head + f"As the aggregator, synthesize the best ideas and propose up to {n} strong "
+            f"candidate schedules of your own, each in its OWN <schedule> block — you may reuse, "
+            f"combine, or improve on the above. Every candidate (yours and theirs) is compiled "
+            f"and measured in parallel, so explore complementary strategies.")
+
+
 def kernel_message_multi(menv):
     from .multikernel import _Kernelish
     n = len(menv.mk.statements)
