@@ -90,19 +90,21 @@ def _make_client(spec, base_url, temperature=0.7):
 
 
 def _list_kernels():
-    from .kernels import REGISTRY, MULTI_REGISTRY, STENCIL_REGISTRY
+    from .kernels import REGISTRY, MULTI_REGISTRY, STENCIL_REGISTRY, IMPERFECT_REGISTRY
     return {"single": sorted(REGISTRY),
             "multi": sorted(MULTI_REGISTRY),
-            "stencil": sorted(STENCIL_REGISTRY)}
+            "stencil": sorted(STENCIL_REGISTRY),
+            "imperfect": sorted(IMPERFECT_REGISTRY)}
 
 
 def _check_legality(kernel, schedule, size="LARGE"):
     from .backend_isl import environment
-    from .kernels import REGISTRY
-    if kernel not in REGISTRY:
+    from .kernels import REGISTRY, IMPERFECT_REGISTRY
+    # imperfect-nest solvers take a single shared schedule, so check_legality fits them too
+    if kernel not in REGISTRY and kernel not in IMPERFECT_REGISTRY:
         return {"error": f"{kernel!r} is multi-statement/stencil or unknown. check_legality "
-                         f"supports single-statement kernels {sorted(REGISTRY)}; use optimize "
-                         f"for the rest."}
+                         f"supports single-statement {sorted(REGISTRY)} and imperfect-nest "
+                         f"{sorted(IMPERFECT_REGISTRY)} kernels; use optimize for the rest."}
     r = environment(kernel, size).evaluate(schedule)
     return {"status": r.status, "speedup": r.speedup, "detail": r.detail}
 

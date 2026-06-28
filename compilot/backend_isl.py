@@ -32,8 +32,15 @@ _EXECUTABLE = {"interchange", "reorder", "tile", "tile2d", "tile3d", "parallel",
 
 
 def environment(name, size="LARGE"):
-    """Build an Environment for a registered kernel name at a PolyBench size class."""
-    from .kernels import sized_kernel
+    """Build an Environment for a registered kernel name at a PolyBench size class.
+
+    Imperfect-nest kernels (solvers) get an ImperfectEnvironment, which exposes the
+    same .pk/.baseline()/.evaluate() interface, so the single-statement agent
+    dialogue, prompt builder, and MCP/TUI single-schedule paths work unchanged."""
+    from .kernels import sized_kernel, IMPERFECT_REGISTRY
+    if name in IMPERFECT_REGISTRY:
+        from .imperfect import ImperfectEnvironment
+        return ImperfectEnvironment(sized_kernel(name, size))
     ek, pk = sized_kernel(name, size)
     return Environment(ek, pk)
 

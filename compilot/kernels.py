@@ -433,6 +433,47 @@ STENCIL_REGISTRY = {"jacobi1d": _jacobi1d, "jacobi2d": _jacobi2d, "seidel2d": _s
                     "heat3d": _heat3d}
 
 
+# ---- imperfect-nest kernels (Track C; see imperfect.py) --------------------
+def _trisolv():
+    """Lower-triangular solve Lx=b. Imperfect: x[i]=b[i] (depth 1), the reduction
+    x[i]-=L[i][j]*x[j] (depth 2), x[i]/=L[i][i] (depth 1). Both loops are carried
+    (i by the x[j] recurrence, j by the reduction into x[i]) -> all naive
+    parallelism is correctly rejected; the diagonal boost keeps L[i][i] nonzero."""
+    from .imperfect import IStmt, ImperfectKernel
+    N = 1000
+    loops = [("i", "0", "N"), ("j", "0", "i")]
+    stmts = [IStmt(1, "x[i] = b[i];"),
+             IStmt(2, "x[i] -= L[i*N+j]*x[j];"),
+             IStmt(1, "x[i] /= L[i*N+i];")]
+    poly = PolyKernel("trisolv", ["i", "j"], "0<=i<N and 0<=j<i",
+                      [("x", "i")], [("L", "i,j"), ("x", "j"), ("x", "i")], ["N"])
+    return ImperfectKernel("trisolv", {"N": N}, {"L": ("N", "N"), "x": ("N", 1), "b": ("N", 1)},
+                           loops, stmts, poly, final="x",
+                           reset={"L": "reinit", "x": "zero"},
+                           setup="for(int d_=0;d_<N;d_++) L[d_*N+d_]+=N;")
+
+
+def _lu():
+    """Right-looking LU (no pivoting): A[i][k]/=A[k][k] (depth 2) then the rank-1
+    update A[i][j]-=A[i][k]*A[k][j] (depth 3). k is the sequential carried loop
+    (parallel(k) correctly rejected); i and j are independent foralls
+    (parallel(i)/parallel(j) proven legal and run correctly — though at PolyBench
+    sizes the per-step-barrier parallel form doesn't beat serial -O3, so the search
+    keeps identity). Diagonal boost keeps pivots nonzero each rep."""
+    from .imperfect import IStmt, ImperfectKernel
+    N = 256
+    loops = [("k", "0", "N"), ("i", "k+1", "N"), ("j", "k+1", "N")]
+    stmts = [IStmt(2, "A[i*N+k] /= A[k*N+k];"),
+             IStmt(3, "A[i*N+j] -= A[i*N+k]*A[k*N+j];")]
+    poly = PolyKernel("lu", ["k", "i", "j"], "0<=k<N and k<i<N and k<j<N",
+                      [("A", "i,j")], [("A", "i,k"), ("A", "k,j"), ("A", "i,j")], ["N"])
+    return ImperfectKernel("lu", {"N": N}, {"A": ("N", "N")}, loops, stmts, poly, final="A",
+                           reset={"A": "reinit"}, setup="for(int d_=0;d_<N;d_++) A[d_*N+d_]+=N;")
+
+
+IMPERFECT_REGISTRY = {"trisolv": _trisolv, "lu": _lu}
+
+
 # ---- PolyBench size classes (the ×5 instance dimension) --------------------
 # PolyBench/C ships five standard dataset sizes per kernel. Legality is size-
 # independent (domains are symbolic in N/M/K), so a size class only rescales the
@@ -464,6 +505,8 @@ def sized_kernel(name, size="LARGE"):
         sk = STENCIL_REGISTRY[name]()
     elif name in MULTI_REGISTRY:
         sk = MULTI_REGISTRY[name]()
+    elif name in IMPERFECT_REGISTRY:
+        sk = IMPERFECT_REGISTRY[name]()
     else:
         raise KeyError(name)
     sk.sizes = _scale(sk.sizes, f)        # fresh object per call -> safe to mutate
