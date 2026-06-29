@@ -13,5 +13,10 @@ WORKDIR /app
 COPY . .
 RUN pip install --no-cache-dir .
 
+# Drop privileges: the MCP server, clang, and the generated binaries need no root.
+# Temp work goes to /tmp (world-writable), so an unprivileged user is enough.
+RUN useradd --create-home --uid 10001 app
+USER app
+
 # stdio MCP server — run with `docker run -i ghcr.io/cluster2600/cluster_compilot`.
 ENTRYPOINT ["compilot-mcp"]
