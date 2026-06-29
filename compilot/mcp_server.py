@@ -76,6 +76,28 @@ TOOLS = [
 
 # --- tool implementations (imports are lazy so tools/list never loads islpy) ---
 
+def _check_base_url(base_url):
+    """Reject SSRF-prone base_url values from MCP clients before we POST to them.
+
+    The 'local' backend lets a caller name an OpenAI-compatible endpoint (Ollama,
+    a remote NIM). That is a request-forgery sink, so require http(s) and block the
+    cloud-metadata link-local range (169.254/16) which has no legitimate LLM there.
+    Loopback/LAN stays allowed — that's the normal Ollama case.
+    """
+    import ipaddress
+    from urllib.parse import urlparse
+    u = urlparse(base_url)
+    if u.scheme not in ("http", "https") or not u.hostname:
+        raise ValueError(f"base_url must be an http(s) URL with a host, got {base_url!r}")
+    try:
+        ip = ipaddress.ip_address(u.hostname)
+    except ValueError:
+        ip = None  # a hostname, not a literal IP
+    if ip is not None and ip.is_link_local:
+        raise ValueError(f"base_url host {u.hostname} is link-local (cloud-metadata range); refused")
+    return base_url
+
+
 def _make_client(spec, base_url, temperature=0.7):
     """spec is 'backend:model' (split on first ':' so Ollama tags survive)."""
     from .llm import GeminiClient, OpenAIClient, MockClient
@@ -83,7 +105,7 @@ def _make_client(spec, base_url, temperature=0.7):
     if backend == "mock":
         return MockClient()
     if backend == "local":
-        return OpenAIClient(model=model, base_url=base_url, temperature=temperature)
+        return OpenAIClient(model=model, base_url=_check_base_url(base_url), temperature=temperature)
     if backend == "gemini":
         return GeminiClient(model=model, temperature=temperature)
     raise ValueError(f"unknown backend in {spec!r} (use gemini:…, local:…, or mock)")

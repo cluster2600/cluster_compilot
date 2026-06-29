@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "compilot"
-version = "0.2.0"
+version = "0.2.1"
 description = "Agentic auto-scheduling: polyhedral legality (ISL) + LLM loop transforms"
 readme = "README.md"
 requires-python = ">=3.14"
 license = "MIT"
 keywords = ["polyhedral", "compiler", "loop-optimization", "isl", "openmp", "mcp", "llm", "polybench"]
 dependencies = [
-    "islpy>=2026.1",   # ISL polyhedral legality engine (same library Tiramisu wraps)
-    "certifi",         # CA bundle for HTTPS on macOS python.org builds
+    "islpy>=2026.1,<2027",   # ISL polyhedral legality engine (same library Tiramisu wraps); bounded for reproducible builds
+    "certifi>=2026.6.17",    # CA bundle for HTTPS on macOS python.org builds
 ]
 
 [project.urls]

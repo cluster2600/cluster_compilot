@@ -136,6 +136,19 @@ def test_zero_time_is_measurement_error_not_fake_speedup():  # adversarial #1
     print("OK zero measured time -> measurement error, not fake speedup (adversarial #1)")
 
 
+def test_mcp_base_url_rejects_ssrf():                    # cso hardening
+    from compilot.mcp_server import _check_base_url
+    for bad in ("ftp://x/v1", "file:///etc/passwd", "http://169.254.169.254/v1", "http://[fe80::1]/v1"):
+        try:
+            _check_base_url(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"{bad!r} should be refused (bad scheme or link-local)")
+    for ok in ("http://localhost:11434/v1", "https://nim.example.com/v1"):
+        assert _check_base_url(ok) == ok, ok
+    print("OK MCP base_url rejects non-http(s) and link-local/metadata (cso)")
+
+
 _TESTS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
 
 if __name__ == "__main__":
