@@ -69,6 +69,13 @@ def compile_and_run(c_code, threads=None, timeout=120):
         c = re.search(r"CHECKSUM\s+([0-9.eE+-]+)", rp.stdout)
         if not (t and c):
             return {"ok": False, "error": "no_output", "detail": rp.stdout[-400:]}
-        return {"ok": True, "time": float(t.group(1)), "checksum": float(c.group(1))}
+        secs = float(t.group(1))
+        # A non-positive time means the work rounded to zero at our print precision.
+        # Don't divide by it (that manufactures a giant fake speedup) -- flag it so the
+        # caller reruns at a larger size. The chokepoint for all four environments.
+        if secs <= 0:
+            return {"ok": False, "error": "measurement",
+                    "detail": f"measured time {secs}s too small to trust; use a larger size class"}
+        return {"ok": True, "time": secs, "checksum": float(c.group(1))}
     finally:
         shutil.rmtree(d, ignore_errors=True)

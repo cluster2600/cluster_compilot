@@ -136,5 +136,5 @@ class Environment:
             return Result("incorrect",
                           detail=f"checksum {r['checksum']:.6e} != baseline {ref:.6e} "
                                  f"(ISL said legal — codegen bug)", schedule=schedule_text)
-        return Result("success", speedup=base["time"] / max(r["time"], 1e-9),
+        return Result("success", speedup=base["time"] / r["time"],
                       detail=f"{base['time']:.4f}s -> {r['time']:.4f}s", schedule=schedule_text)

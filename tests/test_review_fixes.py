@@ -105,6 +105,37 @@ def test_run_timeout_returns_error():                     # issue #11
     print("OK run timeout returns error, no exception (#11)")
 
 
+def test_tile_factors_must_be_positive():                # adversarial #4
+    for ok in ("tile(i, 16)", "unroll(j, 4)", "tile2d(i, j, 32, 32)", "tile3d(k, i, j, 8, 8, 8)"):
+        schedule.parse(ok)
+    for bad in ("tile(i, 0)", "tile(i, -16)", "unroll(j, 0)", "tile2d(i, j, 0, 8)", "tile2d(i, j)"):
+        try:
+            schedule.parse(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"{bad!r} should be rejected (zero/negative/missing factor)")
+    print("OK tile/unroll factors must be positive integers (adversarial #4)")
+
+
+def test_malformed_multi_schedule_is_invalid_not_crash():  # adversarial #3
+    from compilot.kernels import MULTI_REGISTRY
+    from compilot.multikernel import MultiEnvironment
+    env = MultiEnvironment(MULTI_REGISTRY["2mm"]())
+    # "skew(i)" parses but build_theta indexes missing args -> IndexError, which the
+    # multi/stencil/imperfect paths previously did NOT catch (only ValueError/KeyError).
+    r = env.evaluate(["skew(i)", ""])
+    assert r["status"] == "invalid", f"expected invalid, got {r['status']}"
+    print("OK malformed multi schedule -> invalid, no crash (adversarial #3)")
+
+
+def test_zero_time_is_measurement_error_not_fake_speedup():  # adversarial #1
+    from compilot import runner
+    src = '#include <stdio.h>\nint main(){printf("TIME 0.000000000\\nCHECKSUM 1.0\\n");return 0;}'
+    r = runner.compile_and_run(src)
+    assert r["ok"] is False and r["error"] == "measurement", f"expected measurement error, got {r}"
+    print("OK zero measured time -> measurement error, not fake speedup (adversarial #1)")
+
+
 _TESTS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
 
 if __name__ == "__main__":
