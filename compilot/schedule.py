@@ -24,6 +24,12 @@ _PRIMITIVES = {
     "unroll", "skew", "reverse", "fuse", "shift",
 }
 
+# Arg positions that are loop SIZE factors (tile blocks / unroll counts). These become
+# C loop steps, so they must be positive integers -- 0 or negative makes the generated
+# loop never advance and spin until the run timeout. (skew coefficients may be negative,
+# so they are deliberately not listed here.)
+_FACTOR_POS = {"tile": (1,), "unroll": (1,), "tile2d": (2, 3), "tile3d": (3, 4, 5)}
+
 
 def parse(text: str):
     """Parse schedule text into [(op, [args...]), ...]. Raises ValueError."""
@@ -42,5 +48,9 @@ def parse(text: str):
         for a in args:
             if not _ARG.fullmatch(a):
                 raise ValueError(f"invalid schedule argument {a!r} in {raw!r}")
+        for pos in _FACTOR_POS.get(op, ()):
+            val = args[pos] if pos < len(args) else ""
+            if not val.isdigit() or int(val) == 0:   # .isdigit() rejects '-16' and loop names
+                raise ValueError(f"{op} factor must be a positive integer, got {args!r} in {raw!r}")
         ops.append((op, args))
     return ops

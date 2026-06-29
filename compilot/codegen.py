@@ -163,7 +163,7 @@ int main(void) {{
     if (dt < best) best = dt;
   }}
 {checksum}
-  printf("TIME %.6f\\nCHECKSUM %.6e\\n", best, sum);
+  printf("TIME %.9f\\nCHECKSUM %.6e\\n", best, sum);
 {frees}
   return 0;
 }}

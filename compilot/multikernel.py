@@ -12,6 +12,8 @@ step, on top of polyhedral_multi's fusion legality.)
 """
 from dataclasses import dataclass, field
 
+import islpy as isl
+
 from . import codegen as _cg
 from . import schedule as _schedule
 from . import runner as _runner
@@ -103,7 +105,7 @@ int main(void){{
     if(dt<best)best=dt;
   }}
 {checksum}
-  printf("TIME %.6f\\nCHECKSUM %.6e\\n", best, acc_);
+  printf("TIME %.9f\\nCHECKSUM %.6e\\n", best, acc_);
 {frees}
   return 0;
 }}
@@ -145,7 +147,7 @@ class MultiEnvironment:
                     if not is_parallel(D, theta, lvl):
                         return {"status": "parallel_illegal", "stmt": s.output, "speedup": None}
             program = _emit_program(self.mk, scheds)
-        except (ValueError, KeyError) as e:
+        except (ValueError, IndexError, KeyError, isl.Error) as e:
             return {"status": "invalid", "speedup": None, "detail": str(e)}
         base = self.baseline()
         r = _runner.compile_and_run(program)
@@ -153,5 +155,5 @@ class MultiEnvironment:
             return {"status": r["error"], "speedup": None, "detail": r.get("detail", "")}
         if abs(r["checksum"] - base["checksum"]) > 1e-6 * max(1.0, abs(base["checksum"])):
             return {"status": "incorrect", "speedup": None}
-        return {"status": "success", "speedup": base["time"] / max(r["time"], 1e-9),
+        return {"status": "success", "speedup": base["time"] / r["time"],
                 "detail": f"{base['time']:.4f}s -> {r['time']:.4f}s"}

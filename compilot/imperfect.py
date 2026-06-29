@@ -25,6 +25,8 @@ parallelism on the sequential carried loop while ACCEPTING it on independent one
 """
 from dataclasses import dataclass, field
 
+import islpy as isl
+
 from . import runner as _runner
 from . import schedule as _schedule
 from .backend_isl import Result
@@ -127,7 +129,7 @@ int main(void){{
     if(dt<best)best=dt;
   }}
 {checksum}
-  printf("TIME %.6f\\nCHECKSUM %.6e\\n", best, acc_);
+  printf("TIME %.9f\\nCHECKSUM %.6e\\n", best, acc_);
   return 0;
 }}
 """
@@ -155,7 +157,7 @@ class ImperfectEnvironment:
         try:
             ops = _schedule.parse(schedule_text)
             theta, labels, par, _ = build_theta(self.pk, ops)
-        except ValueError as e:
+        except (ValueError, IndexError, KeyError, isl.Error) as e:
             return Result("invalid", detail=str(e), schedule=schedule_text)
         legal, viol = is_legal(self.D, theta)
         if not legal:
@@ -179,5 +181,5 @@ class ImperfectEnvironment:
         if abs(r["checksum"] - ref) > 1e-6 * max(1.0, abs(ref)):
             return Result("incorrect", detail=f"checksum {r['checksum']:.6e} != baseline {ref:.6e}",
                           schedule=schedule_text)
-        return Result("success", speedup=base["time"] / max(r["time"], 1e-9),
+        return Result("success", speedup=base["time"] / r["time"],
                       detail=f"{base['time']:.4f}s -> {r['time']:.4f}s", schedule=schedule_text)
