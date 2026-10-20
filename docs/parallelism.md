@@ -47,9 +47,9 @@ flowchart TD
   C1 --> EV["env.evaluate()"]
   C2 --> EV
   Cn --> EV
-  EV --> L1{"_ISL_LOCK<br/>legality: build_theta · is_legal · is_parallel<br/>(islpy DEFAULT_CONTEXT — fast, serialized)"}
+  EV --> L1{"ISL_LOCK<br/>build_theta · is_legal · is_parallel · ISL AST codegen<br/>(islpy DEFAULT_CONTEXT — fast, serialized)"}
   L1 -- illegal --> BAD["reject (no code run)"]
-  L1 -- legal --> CG["codegen → clang -O3<br/>(parallel)"]
+  L1 -- legal --> CG["clang -O3<br/>(parallel)"]
   CG --> L2{"_RUN_LOCK<br/>timed run<br/>(exclusive — one stopwatch at a time)"}
   L2 --> RES["Result: measured speedup"]
 ```
@@ -58,10 +58,12 @@ flowchart TD
 
 **Why two locks:**
 
-- **`_ISL_LOCK`** (`backend_isl.py`) — islpy builds every object in a
-  process-global ISL context that is *not* thread-safe. The legality section is
-  microsecond-to-millisecond cheap, so serializing it costs almost nothing; the
-  expensive compile/run stays outside it.
+- **`ISL_LOCK`** (`polyhedral.py`, re-exported as `backend_isl._ISL_LOCK`) —
+  islpy builds every object in a process-global ISL context that is *not*
+  thread-safe. Every environment (single, multi-statement, stencil,
+  imperfect-nest) holds it for θ′ construction, legality, parallelism and the ISL
+  AST codegen. That section is millisecond-cheap, so serializing it costs almost
+  nothing; the expensive compile/run stays outside it.
 - **`_RUN_LOCK`** (`runner.py`) — only one *timed* binary executes at a time.
   Concurrent benchmark processes contend for cores and caches and would bias the
   very wall-clock speedup the agent optimizes for. Compilation and the LLM calls
@@ -126,6 +128,13 @@ matches the serial reference (speedups jitter; status must not):
 ```
 OK: 384 concurrent evaluate() calls, 0 mismatches, verdicts identical to serial.
 ```
+
+The lock keeps each run honest, but a single run is still noisy: twelve
+identical GEMM `reorder(i,k,j)` + `parallel(i)` runs on a 16-core box measured
+21–67× (median 49×). That is why a new best is re-measured before it counts —
+`env.confirm` re-runs it `CONFIRM_ROUNDS` times (under `_RUN_LOCK`) and keeps the
+median; `bench.py`/`baselines.py` use `interleaved=True`, which alternates
+baseline and candidate runs (ABBA…) and keeps the median ratio.
 
 A measured illustration of the measurement lock's effect (mock GEMM, best-of-3):
 without it, simultaneous timed runs depressed an honest ~50× to 8–21×; with it,
