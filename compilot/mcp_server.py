@@ -13,10 +13,20 @@ Wire into Claude Code / Codex: see npm/README.md.
 # ponytail: hand-rolled MCP (initialize/tools.list/tools.call only); swap in the
 # `mcp` SDK only if we need resources/prompts/streaming.
 """
+import functools
 import json
 import sys
+from importlib import metadata
 
-SERVER_INFO = {"name": "compilot", "version": "0.1.0"}
+
+def _version():
+    try:
+        return metadata.version("compilot")
+    except metadata.PackageNotFoundError:     # running from a checkout without install
+        return "0+unknown"
+
+
+SERVER_INFO = {"name": "compilot", "version": _version()}
 DEFAULT_PROTOCOL = "2025-06-18"
 
 TOOLS = [
@@ -29,9 +39,11 @@ TOOLS = [
     {
         "name": "check_legality",
         "description": "Prove a hand-written schedule's polyhedral legality (ISL) and, if "
-                       "legal, compile + run it for a real wall-clock speedup. Single-statement "
-                       "kernels only (gemm, syrk, ...); sub-second, no LLM. schedule is the "
-                       "transform DSL, e.g. 'reorder(i, k, j)\\ntile2d(i, j, 32, 32)\\nparallel(i_t)'.",
+                       "legal, compile + run it for a real wall-clock speedup (one noisy run). "
+                       "Single-statement and imperfect-nest kernels (gemm, syrk, lu, ...); no LLM. "
+                       "The first call per kernel+size also compiles and times the baseline "
+                       "(seconds at LARGE); later calls reuse it. schedule is the transform DSL, "
+                       "e.g. 'reorder(i, k, j)\\ntile2d(i, j, 32, 32)\\nparallel(i_t)'.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -81,20 +93,32 @@ def _check_base_url(base_url):
 
     The 'local' backend lets a caller name an OpenAI-compatible endpoint (Ollama,
     a remote NIM). That is a request-forgery sink, so require http(s) and block the
-    cloud-metadata link-local range (169.254/16) which has no legitimate LLM there.
+    link-local range (169.254/16, fe80::/10 — cloud metadata lives there, and no
+    legitimate LLM does). The host is RESOLVED and every address checked, so numeric
+    spellings (2852039166, 0xa9fea9fe) and names pointing there are refused too.
     Loopback/LAN stays allowed — that's the normal Ollama case.
+    ponytail: a DNS answer that changes between this check and the request
+    (rebinding) is not covered; nor is a host that doesn't resolve yet (same
+    class — the later request resolves it), which is let through.
     """
     import ipaddress
+    import socket
     from urllib.parse import urlparse
     u = urlparse(base_url)
     if u.scheme not in ("http", "https") or not u.hostname:
         raise ValueError(f"base_url must be an http(s) URL with a host, got {base_url!r}")
     try:
-        ip = ipaddress.ip_address(u.hostname)
-    except ValueError:
-        ip = None  # a hostname, not a literal IP
-    if ip is not None and ip.is_link_local:
-        raise ValueError(f"base_url host {u.hostname} is link-local (cloud-metadata range); refused")
+        infos = socket.getaddrinfo(u.hostname, u.port or (443 if u.scheme == "https" else 80),
+                                   proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, UnicodeError):
+        return base_url
+    for *_, sockaddr in infos:
+        ip = ipaddress.ip_address(sockaddr[0].split("%", 1)[0])
+        if getattr(ip, "ipv4_mapped", None):
+            ip = ip.ipv4_mapped
+        if ip.is_link_local:
+            raise ValueError(f"base_url host {u.hostname} resolves to link-local {ip} "
+                             f"(cloud-metadata range); refused")
     return base_url
 
 
@@ -119,15 +143,22 @@ def _list_kernels():
             "imperfect": sorted(IMPERFECT_REGISTRY)}
 
 
-def _check_legality(kernel, schedule, size="LARGE"):
+@functools.lru_cache(maxsize=32)
+def _env(kernel, size):
+    """One Environment per (kernel, size) for the server's lifetime, so the baseline is
+    compiled and timed once and repeated schedules hit evaluate()'s memo."""
     from .backend_isl import environment
+    return environment(kernel, size)
+
+
+def _check_legality(kernel, schedule, size="LARGE"):
     from .kernels import REGISTRY, IMPERFECT_REGISTRY
     # imperfect-nest solvers take a single shared schedule, so check_legality fits them too
     if kernel not in REGISTRY and kernel not in IMPERFECT_REGISTRY:
         return {"error": f"{kernel!r} is multi-statement/stencil or unknown. check_legality "
                          f"supports single-statement {sorted(REGISTRY)} and imperfect-nest "
                          f"{sorted(IMPERFECT_REGISTRY)} kernels; use optimize for the rest."}
-    r = environment(kernel, size).evaluate(schedule)
+    r = _env(kernel, size).evaluate(schedule)
     return {"status": r.status, "speedup": r.speedup, "detail": r.detail}
 
 

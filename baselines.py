@@ -25,13 +25,11 @@ NAIVE_MULTI = {"2mm": ["parallel(i)", "parallel(i)"], "3mm": ["parallel(i)"] * 3
 
 
 def sp_single(name, sched):
-    r = environment(name).evaluate(sched)
-    return r.speedup if r.status == "success" else 1.0
+    return (environment(name).confirm(sched, interleaved=True) if sched else None) or 1.0   # median of A/B rounds
 
 
 def sp_multi(name, scheds):
-    r = MultiEnvironment(MULTI_REGISTRY[name]()).evaluate(scheds)
-    return r["speedup"] if r["status"] == "success" else 1.0
+    return MultiEnvironment(MULTI_REGISTRY[name]()).confirm(scheds, interleaved=True) or 1.0
 
 
 def main():

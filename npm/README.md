@@ -18,8 +18,10 @@ pip install -e .
 brew install libomp        # OpenMP for clang (macOS)
 ```
 
-Then point the launcher at that interpreter via `COMPILOT_PYTHON` (or run it from
-the checkout, where it finds `./.venv/bin/python` automatically).
+Then point the launcher at that interpreter via `COMPILOT_PYTHON` (otherwise it
+uses `python3` from `PATH`). It deliberately never picks up a `./.venv` or a
+`./compilot/` from the directory it is started in — MCP clients launch it inside
+whatever project is open, and that project must not be able to swap in its own code.
 
 ## Tools
 

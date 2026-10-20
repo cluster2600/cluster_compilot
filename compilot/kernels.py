@@ -379,7 +379,7 @@ def _seidel2d():
             "+A[(i+1)*N+j-1]+A[(i+1)*N+j]+A[(i+1)*N+j+1])/9.0;")
     s = SStmt([("i", "1", "N-1"), ("j", "1", "N-1")], body,
               PolyKernel("A", ["i", "j"], "1<=i<N-1 and 1<=j<N-1", [("A", "i,j")],
-                         [("A", "i-1,j"), ("A", "i,j-1"), ("A", "i+1,j"), ("A", "i,j+1"), ("A", "i,j")],
+                         [("A", f"{di},{dj}") for di in ("i-1", "i", "i+1") for dj in ("j-1", "j", "j+1")],
                          ["N"]))
     return StencilKernel("seidel2d", {"N": N, "TSTEPS": T}, {"A": ("N", "N")},
                          [s], reset={"A": "reinit"}, final="A")
@@ -467,31 +467,31 @@ def _adi():
     I = ("i", "1", "N-1")
     # constants: a=1,b=4,c=1,d=1,f=1,(1+2d)=3  -> a*p+b stays in [~3.75,4]
     cs_b = SStmt([I], "v[0*N+i]=1.0; p[i*N+0]=0.0; q[i*N+0]=1.0;",
-                 PolyKernel("p", ["i"], "1<=i<N-1", [("p", "i")], [], ["N"]))
+                 PolyKernel("p", ["i"], "1<=i<N-1", [("v", "0,i"), ("p", "i,0"), ("q", "i,0")], [], ["N"]))
     cs_f = SStmt([I, ("j", "1", "N-1")],
                  "double den=p[i*N+(j-1)]+4.0; p[i*N+j]=-1.0/den;"
                  " q[i*N+j]=(-u[j*N+(i-1)]+3.0*u[j*N+i]-u[j*N+(i+1)]-q[i*N+(j-1)])/den;",
                  PolyKernel("p", ["i", "j"], "1<=i<N-1 and 1<=j<N-1",
-                            [("p", "i,j")], [("p", "i,j-1")], ["N"]))
+                            [("p", "i,j"), ("q", "i,j")], [("p", "i,j-1"), ("q", "i,j-1")], ["N"]))
     cs_eb = SStmt([I], "v[(N-1)*N+i]=1.0;",
-                  PolyKernel("v", ["i"], "1<=i<N-1", [("v", "i")], [], ["N"]))
+                  PolyKernel("v", ["i"], "1<=i<N-1", [("v", "N-1,i")], [], ["N"]))
     cs_b2 = SStmt([I, ("jj", "0", "N-2")],
                   "int j=N-2-jj; v[j*N+i]=p[i*N+j]*v[(j+1)*N+i]+q[i*N+j];",
                   PolyKernel("v", ["i", "jj"], "1<=i<N-1 and 0<=jj<N-2",
-                             [("v", "i,jj")], [("v", "i,jj-1")], ["N"]))
+                             [("v", "N-2-jj,i")], [("v", "N-1-jj,i")], ["N"]))
     rs_b = SStmt([I], "u[i*N+0]=1.0; p[i*N+0]=0.0; q[i*N+0]=1.0;",
-                 PolyKernel("p", ["i"], "1<=i<N-1", [("p", "i")], [], ["N"]))
+                 PolyKernel("p", ["i"], "1<=i<N-1", [("u", "i,0"), ("p", "i,0"), ("q", "i,0")], [], ["N"]))
     rs_f = SStmt([I, ("j", "1", "N-1")],
                  "double den=p[i*N+(j-1)]+4.0; p[i*N+j]=-1.0/den;"
                  " q[i*N+j]=(-v[(i-1)*N+j]+3.0*v[i*N+j]-v[(i+1)*N+j]-q[i*N+(j-1)])/den;",
                  PolyKernel("p", ["i", "j"], "1<=i<N-1 and 1<=j<N-1",
-                            [("p", "i,j")], [("p", "i,j-1")], ["N"]))
+                            [("p", "i,j"), ("q", "i,j")], [("p", "i,j-1"), ("q", "i,j-1")], ["N"]))
     rs_eb = SStmt([I], "u[i*N+(N-1)]=1.0;",
-                  PolyKernel("u", ["i"], "1<=i<N-1", [("u", "i")], [], ["N"]))
+                  PolyKernel("u", ["i"], "1<=i<N-1", [("u", "i,N-1")], [], ["N"]))
     rs_b2 = SStmt([I, ("jj", "0", "N-2")],
                   "int j=N-2-jj; u[i*N+j]=p[i*N+j]*u[i*N+(j+1)]+q[i*N+j];",
                   PolyKernel("u", ["i", "jj"], "1<=i<N-1 and 0<=jj<N-2",
-                             [("u", "i,jj")], [("u", "i,jj-1")], ["N"]))
+                             [("u", "i,N-2-jj")], [("u", "i,N-1-jj")], ["N"]))
     return StencilKernel("adi", {"N": N, "TSTEPS": T},
                          {"u": ("N", "N"), "v": ("N", "N"), "p": ("N", "N"), "q": ("N", "N")},
                          [cs_b, cs_f, cs_eb, cs_b2, rs_b, rs_f, rs_eb, rs_b2],
@@ -511,12 +511,12 @@ def _deriche():
                  f"y1[i*H+j] = {a1}*in_[i*H+j] + (j>=1?{a2}*in_[i*H+(j-1)]+{b1}*y1[i*H+(j-1)]:0.0)"
                  f" + (j>=2?{b2}*y1[i*H+(j-2)]:0.0);",
                  PolyKernel("y1", ["i", "j"], "0<=i<W and 0<=j<H",
-                            [("y1", "i,j")], [("y1", "i,j-1")], ["W", "H"]))
+                            [("y1", "i,j")], [("y1", "i,j-1"), ("y1", "i,j-2")], ["W", "H"]))
     h_rl = SStmt([("i", "0", "W"), ("jj", "0", "H")],
                  f"int j=H-1-jj; y2[i*H+j] = (j<=H-2?{a3}*in_[i*H+(j+1)]+{b1}*y2[i*H+(j+1)]:0.0)"
                  f" + (j<=H-3?{b2}*y2[i*H+(j+2)]:0.0);",
                  PolyKernel("y2", ["i", "jj"], "0<=i<W and 0<=jj<H",
-                            [("y2", "i,jj")], [("y2", "i,jj-1")], ["W", "H"]))
+                            [("y2", "i,H-1-jj")], [("y2", "i,H-jj"), ("y2", "i,H+1-jj")], ["W", "H"]))
     h_c = SStmt([("i", "0", "W"), ("j", "0", "H")],
                 f"imgOut[i*H+j] = {c1}*(y1[i*H+j]+y2[i*H+j]);",
                 PolyKernel("imgOut", ["i", "j"], "0<=i<W and 0<=j<H",
@@ -525,12 +525,12 @@ def _deriche():
                  f"y1[i*H+j] = {a1}*imgOut[i*H+j] + (i>=1?{a2}*imgOut[(i-1)*H+j]+{b1}*y1[(i-1)*H+j]:0.0)"
                  f" + (i>=2?{b2}*y1[(i-2)*H+j]:0.0);",
                  PolyKernel("y1", ["j", "i"], "0<=j<H and 0<=i<W",
-                            [("y1", "i,j")], [("y1", "i-1,j")], ["W", "H"]))
+                            [("y1", "i,j")], [("y1", "i-1,j"), ("y1", "i-2,j")], ["W", "H"]))
     v_bu = SStmt([("j", "0", "H"), ("ii", "0", "W")],
                  f"int i=W-1-ii; y2[i*H+j] = (i<=W-2?{a3}*imgOut[(i+1)*H+j]+{b1}*y2[(i+1)*H+j]:0.0)"
                  f" + (i<=W-3?{b2}*y2[(i+2)*H+j]:0.0);",
                  PolyKernel("y2", ["j", "ii"], "0<=j<H and 0<=ii<W",
-                            [("y2", "ii,j")], [("y2", "ii-1,j")], ["W", "H"]))
+                            [("y2", "W-1-ii,j")], [("y2", "W-ii,j"), ("y2", "W+1-ii,j")], ["W", "H"]))
     v_c = SStmt([("j", "0", "H"), ("i", "0", "W")],
                 f"imgOut[i*H+j] = {c2}*(y1[i*H+j]+y2[i*H+j]);",
                 PolyKernel("imgOut", ["j", "i"], "0<=j<H and 0<=i<W",

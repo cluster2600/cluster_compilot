@@ -138,7 +138,9 @@ def test_zero_time_is_measurement_error_not_fake_speedup():  # adversarial #1
 
 def test_mcp_base_url_rejects_ssrf():                    # cso hardening
     from compilot.mcp_server import _check_base_url
-    for bad in ("ftp://x/v1", "file:///etc/passwd", "http://169.254.169.254/v1", "http://[fe80::1]/v1"):
+    for bad in ("ftp://x/v1", "file:///etc/passwd", "http://169.254.169.254/v1", "http://[fe80::1]/v1",
+                # numeric spellings of 169.254.169.254 that only resolution catches
+                "http://2852039166/v1", "http://0xa9fea9fe/v1", "http://[::ffff:169.254.169.254]/v1"):
         try:
             _check_base_url(bad)
         except ValueError:

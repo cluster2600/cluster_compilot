@@ -63,10 +63,28 @@ def test_unknown_tool_is_error_not_crash():
     print("OK: unknown tool -> isError; unknown method -> -32601")
 
 
+def test_check_legality_reuses_environment():
+    """Repeat calls reuse one Environment per (kernel, size): the baseline is
+    compiled once, not on every call (it was ~seconds per call at LARGE)."""
+    from importlib import metadata
+    from compilot.mcp_server import SERVER_INFO, _env
+    _env.cache_clear()
+    for sched in ("parallel(i)", "reorder(i, k, j)", "parallel(i)"):
+        handle({"jsonrpc": "2.0", "id": 8, "method": "tools/call",
+                "params": {"name": "check_legality",
+                           "arguments": {"kernel": "gemm", "schedule": sched, "size": "SMALL"}}})
+    info = _env.cache_info()
+    assert info.misses == 1 and info.hits == 2, info
+    assert SERVER_INFO["version"] == metadata.version("compilot"), SERVER_INFO
+    print(f"OK: check_legality reuses its environment ({info.hits} hits, 1 baseline); "
+          f"serverInfo.version={SERVER_INFO['version']}")
+
+
 if __name__ == "__main__":
     test_handshake_and_tools_list()
     test_check_legality_tool()
     test_check_legality_rejects_multistatement()
     test_optimize_mock_tool()
     test_unknown_tool_is_error_not_crash()
+    test_check_legality_reuses_environment()
     print("test_mcp: all checks passed")
