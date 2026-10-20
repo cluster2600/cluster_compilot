@@ -2,8 +2,7 @@
 
     python3 -m tests.test_polybench
 """
-from compilot.kernels import (REGISTRY, MULTI_REGISTRY, STENCIL_REGISTRY,
-                              SIZE_CLASSES, sized_kernel)
+from compilot.kernels import REGISTRY, MULTI_REGISTRY, SIZE_CLASSES, sized_kernel
 from compilot.mcp_server import _optimize
 
 

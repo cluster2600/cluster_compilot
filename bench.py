@@ -9,7 +9,7 @@ alternating baseline/candidate runs, not one run (single parallel runs vary 2-3x
 import math
 
 from compilot.backend_isl import environment
-from compilot.kernels import REGISTRY, MULTI_REGISTRY
+from compilot.kernels import MULTI_REGISTRY
 from compilot.multikernel import MultiEnvironment
 
 # single-statement schedules

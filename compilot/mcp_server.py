@@ -143,10 +143,15 @@ def _list_kernels():
             "imperfect": sorted(IMPERFECT_REGISTRY)}
 
 
+# Longest schedule text check_legality accepts. Real schedules are a few lines; the
+# cap keeps a client from making the server parse (and memoize) megabytes of DSL.
+MAX_SCHEDULE_CHARS = 4096
+
+
 @functools.lru_cache(maxsize=32)
 def _env(kernel, size):
     """One Environment per (kernel, size) for the server's lifetime, so the baseline is
-    compiled and timed once and repeated schedules hit evaluate()'s memo."""
+    compiled and timed once and repeated schedules hit evaluate()'s (LRU-bounded) memo."""
     from .backend_isl import environment
     return environment(kernel, size)
 
@@ -158,6 +163,8 @@ def _check_legality(kernel, schedule, size="LARGE"):
         return {"error": f"{kernel!r} is multi-statement/stencil or unknown. check_legality "
                          f"supports single-statement {sorted(REGISTRY)} and imperfect-nest "
                          f"{sorted(IMPERFECT_REGISTRY)} kernels; use optimize for the rest."}
+    if len(schedule) > MAX_SCHEDULE_CHARS:
+        return {"error": f"schedule is {len(schedule)} characters; the limit is {MAX_SCHEDULE_CHARS}"}
     r = _env(kernel, size).evaluate(schedule)
     return {"status": r.status, "speedup": r.speedup, "detail": r.detail}
 

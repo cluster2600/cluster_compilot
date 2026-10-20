@@ -114,7 +114,7 @@ def program(kernel, nest):
         )
     inits = "\n".join(inits)
     od0, od1 = kernel.arrays[kernel.output]
-    rhs = (f"(double)(((x*7 + y*13) % 97)) / 97.0" if kernel.reset == "reinit" else "0.0")
+    rhs = ("(double)(((x*7 + y*13) % 97)) / 97.0" if kernel.reset == "reinit" else "0.0")
     zero = (f"    for (int x = 0; x < {od0}; x++) for (int y = 0; y < {od1}; y++) "
             f"{kernel.output}[x*{od1} + y] = {rhs};")
     # position-weighted: an unweighted sum is permutation-invariant, so a transposed/

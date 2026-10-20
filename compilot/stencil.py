@@ -14,7 +14,7 @@ Structure emitted:
     checksum(final)
 """
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from . import codegen as _cg
 from . import schedule as _schedule

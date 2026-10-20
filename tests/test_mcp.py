@@ -80,6 +80,27 @@ def test_check_legality_reuses_environment():
           f"serverInfo.version={SERVER_INFO['version']}")
 
 
+def test_long_lived_server_memory_is_bounded():
+    """The server keeps environments alive, so their schedule memo must stay bounded
+    (LRU, CACHE_MAX) and oversized schedule text is refused up front."""
+    from compilot.backend_isl import CACHE_MAX
+    from compilot.mcp_server import MAX_SCHEDULE_CHARS, _env
+    env = _env("gemm", "SMALL")
+    for n in range(CACHE_MAX + 50):                  # distinct, fast (invalid: unknown loop)
+        handle({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                "params": {"name": "check_legality",
+                           "arguments": {"kernel": "gemm", "schedule": f"parallel(z{n})", "size": "SMALL"}}})
+        if n == 10:
+            env.evaluate("parallel(z0)")             # touch: recently used entries survive eviction
+    assert len(env._cache) == CACHE_MAX, len(env._cache)
+    assert "parallel(z1)" not in env._cache and f"parallel(z{CACHE_MAX + 49})" in env._cache
+    r = handle({"jsonrpc": "2.0", "id": 10, "method": "tools/call",
+                "params": {"name": "check_legality",
+                           "arguments": {"kernel": "gemm", "schedule": "x" * (MAX_SCHEDULE_CHARS + 1)}}})
+    assert "limit" in json.loads(r["result"]["content"][0]["text"])["error"], r
+    print(f"OK: schedule memo capped at {CACHE_MAX} (LRU); schedules over {MAX_SCHEDULE_CHARS} chars refused")
+
+
 if __name__ == "__main__":
     test_handshake_and_tools_list()
     test_check_legality_tool()
@@ -87,4 +108,5 @@ if __name__ == "__main__":
     test_optimize_mock_tool()
     test_unknown_tool_is_error_not_crash()
     test_check_legality_reuses_environment()
+    test_long_lived_server_memory_is_bounded()
     print("test_mcp: all checks passed")

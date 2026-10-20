@@ -17,6 +17,7 @@ Returns a Result whose `status` is one of the paper's feedback categories.
 """
 import islpy as isl
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from . import schedule as _schedule
 from . import codegen as _codegen
@@ -30,6 +31,11 @@ _ISL_LOCK = ISL_LOCK
 # Errors a malformed schedule can raise anywhere in parse -> θ' -> AST codegen
 # (too few args, bad loop name, non-numeric factor, ISL rejecting an expression).
 SCHEDULE_ERRORS = (ValueError, IndexError, KeyError, isl.Error)
+
+# Memoized schedule results kept per Environment (LRU). Bounded because an
+# Environment can live as long as its process (the MCP server keeps one per
+# kernel+size), and a dialogue only ever revisits a handful of schedules.
+CACHE_MAX = 256
 
 
 def environment(name, size="LARGE"):
@@ -65,7 +71,7 @@ class Environment:
             self.D = dependences(poly_kernel)
         self._baseline = None
         self._baseline_lock = threading.Lock()
-        self._cache = {}                          # schedule key -> Result (shared across the search)
+        self._cache = OrderedDict()               # schedule key -> Result, LRU-bounded by CACHE_MAX
         self._cache_lock = threading.Lock()
 
     def baseline_program(self):
@@ -88,17 +94,23 @@ class Environment:
     def evaluate(self, schedule_text) -> Result:
         """Memoized: the same schedule (whitespace-insensitive) is compiled and timed
         once, then its Result is reused across the whole parallel search. Skips the
-        redundant clang compile + timed run when runs/candidates re-propose a schedule."""
+        redundant clang compile + timed run when runs/candidates re-propose a schedule.
+        The memo keeps the CACHE_MAX most recently used schedules."""
         key = "".join(schedule_text.split())
         with self._cache_lock:
             hit = self._cache.get(key)
-        if hit is not None:
-            return hit
+            if hit is not None:
+                self._cache.move_to_end(key)
+                return hit
         result = self._evaluate(schedule_text)
         with self._cache_lock:
             # ponytail: a rare duplicate compile if two threads miss at once; setdefault
             # makes them converge on one stored Result rather than locking the whole eval.
-            return self._cache.setdefault(key, result)
+            result = self._cache.setdefault(key, result)
+            self._cache.move_to_end(key)
+            while len(self._cache) > CACHE_MAX:
+                self._cache.popitem(last=False)
+            return result
 
     def _check(self, schedule_text):
         """Parse, prove legality, generate C. Returns (program, None) or (None, Result).

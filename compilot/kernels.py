@@ -503,7 +503,10 @@ def _deriche():
     L->R and R->L (carried along the row, parallel across rows), a combine, then
     vertical T->B and B->U (carried along the column, parallel across columns) and a
     combine. Backward passes use the ascending-index trick; boundary terms guarded
-    by ternaries; stable coefficients (|b1|+|b2|<1). Modeled as a one-step stencil."""
+    by ternaries; stable coefficients (|b1|+|b2|<1). Modeled as a one-step stencil.
+    Like PolyBench, the backward passes take two input taps (a3 at +1, a4 at +2)
+    and the forward passes one past tap (a2 at -1); the vertical passes reuse the
+    horizontal coefficients (PolyBench's a5..a8 are the same values here)."""
     from .stencil import SStmt, StencilKernel
     W, H = 256, 256
     a1, a2, a3, a4, b1, b2, c1, c2 = 0.1, 0.1, 0.1, 0.1, 0.3, 0.2, 1.0, 1.0
@@ -514,7 +517,7 @@ def _deriche():
                             [("y1", "i,j")], [("y1", "i,j-1"), ("y1", "i,j-2")], ["W", "H"]))
     h_rl = SStmt([("i", "0", "W"), ("jj", "0", "H")],
                  f"int j=H-1-jj; y2[i*H+j] = (j<=H-2?{a3}*in_[i*H+(j+1)]+{b1}*y2[i*H+(j+1)]:0.0)"
-                 f" + (j<=H-3?{b2}*y2[i*H+(j+2)]:0.0);",
+                 f" + (j<=H-3?{a4}*in_[i*H+(j+2)]+{b2}*y2[i*H+(j+2)]:0.0);",
                  PolyKernel("y2", ["i", "jj"], "0<=i<W and 0<=jj<H",
                             [("y2", "i,H-1-jj")], [("y2", "i,H-jj"), ("y2", "i,H+1-jj")], ["W", "H"]))
     h_c = SStmt([("i", "0", "W"), ("j", "0", "H")],
@@ -528,7 +531,7 @@ def _deriche():
                             [("y1", "i,j")], [("y1", "i-1,j"), ("y1", "i-2,j")], ["W", "H"]))
     v_bu = SStmt([("j", "0", "H"), ("ii", "0", "W")],
                  f"int i=W-1-ii; y2[i*H+j] = (i<=W-2?{a3}*imgOut[(i+1)*H+j]+{b1}*y2[(i+1)*H+j]:0.0)"
-                 f" + (i<=W-3?{b2}*y2[(i+2)*H+j]:0.0);",
+                 f" + (i<=W-3?{a4}*imgOut[(i+2)*H+j]+{b2}*y2[(i+2)*H+j]:0.0);",
                  PolyKernel("y2", ["j", "ii"], "0<=j<H and 0<=ii<W",
                             [("y2", "W-1-ii,j")], [("y2", "W-ii,j"), ("y2", "W+1-ii,j")], ["W", "H"]))
     v_c = SStmt([("j", "0", "H"), ("i", "0", "W")],
