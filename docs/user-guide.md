@@ -52,7 +52,9 @@ See [`npm/README.md`](../npm/README.md) for the Codex `config.toml` form and det
 ```bash
 python3 evaluate.py --mock                     # deterministic, all kernels (+ pool/CIs/cost)
 python3 evaluate.py --kernels gemm,syrk --k 3  # live Gemini, best-of-3
-python3 bench.py                               # deterministic benchmark (one schedule per kernel)
+python3 bench.py                               # deterministic benchmark, PolyBench LARGE (one schedule per kernel)
+python3 bench.py --size MEDIUM --rounds 3      # quicker; --kernels gemm,2mm for a subset
+python3 run_agent.py --kernel gemm --size LARGE  # sizes: DEFAULT (built-in) or MINI..EXTRALARGE (PolyBench)
 ```
 
 ## Run the tests
