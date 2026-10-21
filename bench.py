@@ -19,6 +19,7 @@ import os
 from compilot.backend_isl import environment
 from compilot.kernels import SIZE_NAMES, sized_kernel
 from compilot.multikernel import MultiEnvironment
+from compilot import runner
 from compilot.runner import CONFIRM_ROUNDS, busy_warning
 
 # single-statement schedules
@@ -51,10 +52,13 @@ def args_parser(doc):
     ap.add_argument("--rounds", type=int, default=CONFIRM_ROUNDS,
                     help="alternating baseline/candidate run pairs per kernel")
     ap.add_argument("--kernels", default="", help="comma-separated subset (default: all)")
+    ap.add_argument("--timeout", type=int, default=runner.RUN_TIMEOUT,
+                    help="seconds per compile / run (naive LARGE baselines can take minutes)")
     return ap
 
 
 def header(args):
+    runner.RUN_TIMEOUT = args.timeout
     threads = os.environ.get("OMP_NUM_THREADS", f"default ({os.cpu_count()} CPUs)")
     print(f"size={args.size}  rounds={args.rounds}  OMP threads={threads}")
     if (warn := busy_warning()):
@@ -73,6 +77,17 @@ def selected(args, *groups):
     return [[n for n in g if not want or n in want] for g in groups]
 
 
+def measure(make_env, sched, args):
+    """(baseline seconds, confirmed speedup) or (None, reason) — one kernel failing
+    (e.g. a naive LARGE baseline over --timeout) mustn't abort the whole benchmark."""
+    try:
+        env = make_env()
+        sp = env.confirm(sched, rounds=args.rounds, interleaved=True)
+        return (env.baseline()["time"], sp) if sp else (None, "candidate failed")
+    except RuntimeError as e:                 # baseline failed (timeout, compile error)
+        return None, str(e)[:70]
+
+
 def main():
     args = args_parser(__doc__).parse_args()
     header(args)
@@ -80,18 +95,15 @@ def main():
     print("-" * 60)
     speeds = []
     singles, multis = selected(args, SINGLE, MULTI)
-    for name in singles:
-        env = environment(name, args.size)
-        sp = env.confirm(SINGLE[name], rounds=args.rounds, interleaved=True)
-        if sp:
-            speeds.append(sp)
-            print(f"{name:16}{env.baseline()['time']:12.4f}{sp:9.2f}x   single", flush=True)
-    for name in multis:
-        env = MultiEnvironment(sized_kernel(name, args.size))
-        sp = env.confirm(MULTI[name], rounds=args.rounds, interleaved=True)
-        if sp:
-            speeds.append(sp)
-            print(f"{name:16}{env.baseline()['time']:12.4f}{sp:9.2f}x   multi", flush=True)
+    jobs = [(n, "single", lambda n=n: environment(n, args.size), SINGLE[n]) for n in singles] + \
+           [(n, "multi", lambda n=n: MultiEnvironment(sized_kernel(n, args.size)), MULTI[n]) for n in multis]
+    for name, kind, make_env, sched in jobs:
+        base, sp = measure(make_env, sched, args)
+        if base is None:
+            print(f"{name:16}{'—':>12}{'—':>10}   {kind}: skipped ({sp})", flush=True)
+            continue
+        speeds.append(sp)
+        print(f"{name:16}{base:12.4f}{sp:9.2f}x   {kind}", flush=True)
     if not speeds:
         raise SystemExit("no kernel produced a speedup")
     gm = math.exp(sum(math.log(x) for x in speeds) / len(speeds))

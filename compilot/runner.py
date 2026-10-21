@@ -33,6 +33,10 @@ _RUN_LOCK = threading.Lock()
 
 CONFIRM_ROUNDS = 5   # baseline/candidate run pairs per ab_speedup
 
+# Per compile and per run, in seconds. Naive baselines at PolyBench LARGE can take
+# minutes (floyd-warshall N=2800), so benchmarks raise it (bench.py --timeout).
+RUN_TIMEOUT = int(os.environ.get("COMPILOT_RUN_TIMEOUT", "120"))
+
 # Opt-in thread placement for timed runs (COMPILOT_OMP_BIND=1), applied only where
 # the user hasn't set these. Pinning is the textbook way to stop threads migrating
 # mid-run, but on a 16-thread WSL2 host it did NOT reduce run-to-run spread (20+20
@@ -129,8 +133,9 @@ def _run(binp, threads, timeout):
             "threads": int(th.group(1)) if th else None}
 
 
-def compile_and_run(c_code, threads=None, timeout=120):
+def compile_and_run(c_code, threads=None, timeout=None):
     """Return dict(ok, time, checksum, error). One compile + one run."""
+    timeout = timeout or RUN_TIMEOUT
     d = tempfile.mkdtemp(prefix="compilot_")
     try:
         binp, err = _compile(c_code, d, timeout)
@@ -144,9 +149,10 @@ def checksums_match(a, b):
     return abs(a - b) <= 1e-6 * max(1.0, abs(b))
 
 
-def rerun(c_code, runs=CONFIRM_ROUNDS, threads=None, timeout=120):
+def rerun(c_code, runs=CONFIRM_ROUNDS, threads=None, timeout=None):
     """Compile once, run `runs` times. dict(ok, time=median, times, checksum) or an
     error dict; every run must print the same checksum."""
+    timeout = timeout or RUN_TIMEOUT
     d = tempfile.mkdtemp(prefix="compilot_rr_")
     try:
         binp, err = _compile(c_code, d, timeout)
@@ -179,11 +185,12 @@ def confirm_speedup(baseline, base_code, cand_code, rounds=CONFIRM_ROUNDS, inter
     return baseline["time"] / r["time"]
 
 
-def ab_speedup(base_code, cand_code, rounds=CONFIRM_ROUNDS, threads=None, timeout=120):
+def ab_speedup(base_code, cand_code, rounds=CONFIRM_ROUNDS, threads=None, timeout=None):
     """Re-measure cand vs base: compile both once, then run them in alternating
     order (ABBA...) for `rounds` pairs, so drift (thermal, frequency, background
     load) hits both alike. Returns dict(ok, speedup=median(base/cand), ratios,
     base_time, time) or an error dict; checks every candidate checksum."""
+    timeout = timeout or RUN_TIMEOUT
     d = tempfile.mkdtemp(prefix="compilot_ab_")
     try:
         os.mkdir(os.path.join(d, "a"))

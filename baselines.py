@@ -14,7 +14,7 @@ import math
 from compilot.backend_isl import environment
 from compilot.kernels import sized_kernel
 from compilot.multikernel import MultiEnvironment
-from bench import SINGLE, MULTI, args_parser, header, selected   # ComPilot's strong schedules
+from bench import SINGLE, MULTI, args_parser, header, measure, selected   # ComPilot's strong schedules
 
 # NAIVE: parallelize the outermost non-reduction loop only
 NAIVE_SINGLE = {"gemm": "parallel(i)", "syrk": "parallel(i)",
@@ -27,12 +27,13 @@ NAIVE_MULTI = {"2mm": ["parallel(i)", "parallel(i)"], "3mm": ["parallel(i)"] * 3
 def sp_single(name, sched, args):
     if not sched:
         return 1.0
-    return environment(name, args.size).confirm(sched, rounds=args.rounds, interleaved=True) or 1.0
+    base, sp = measure(lambda: environment(name, args.size), sched, args)
+    return sp if base else None                  # None: skipped (e.g. baseline over --timeout)
 
 
 def sp_multi(name, scheds, args):
-    env = MultiEnvironment(sized_kernel(name, args.size))
-    return env.confirm(scheds, rounds=args.rounds, interleaved=True) or 1.0   # median of A/B rounds
+    base, sp = measure(lambda: MultiEnvironment(sized_kernel(name, args.size)), scheds, args)
+    return sp if base else None
 
 
 def main():
@@ -43,14 +44,16 @@ def main():
     naive_all, comp_all = [], []
     # only the kernels with a defined NAIVE baseline (a subset of bench's SINGLE/MULTI)
     singles, multis = selected(args, NAIVE_SINGLE, NAIVE_MULTI)
-    for name in singles:
-        n, c = sp_single(name, NAIVE_SINGLE[name], args), sp_single(name, SINGLE[name], args)
+    rows = [(n, sp_single(n, NAIVE_SINGLE[n], args), sp_single(n, SINGLE[n], args)) for n in singles] + \
+           [(n, sp_multi(n, NAIVE_MULTI[n], args), sp_multi(n, MULTI[n], args)) for n in multis]
+    for name, n, c in rows:
+        if n is None or c is None:
+            print(f"{name:16}  skipped (a run failed or exceeded --timeout)")
+            continue
         naive_all.append(n); comp_all.append(c)
-        print(f"{name:16}{n:8.2f}x{c:10.2f}x{c/n:8.2f}x")
-    for name in multis:
-        n, c = sp_multi(name, NAIVE_MULTI[name], args), sp_multi(name, MULTI[name], args)
-        naive_all.append(n); comp_all.append(c)
-        print(f"{name:16}{n:8.2f}x{c:10.2f}x{c/n:8.2f}x")
+        print(f"{name:16}{n:8.2f}x{c:10.2f}x{c/n:8.2f}x", flush=True)
+    if not comp_all:
+        raise SystemExit("no kernel produced a speedup")
     gm = lambda xs: math.exp(sum(math.log(x) for x in xs) / len(xs))
     print("-" * 46)
     print(f"{'GEOMEAN':16}{gm(naive_all):8.2f}x{gm(comp_all):10.2f}x{gm(comp_all)/gm(naive_all):8.2f}x")
