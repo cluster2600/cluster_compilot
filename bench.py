@@ -62,9 +62,15 @@ def header(args):
     print()
 
 
-def selected(args, names):
+def selected(args, *groups):
+    """The kernels of `groups` (dicts in run order) that --kernels asks for. Unknown
+    names are an error, so a typo can't silently produce an empty benchmark."""
     want = [k.strip() for k in args.kernels.split(",") if k.strip()]
-    return [n for n in names if not want or n in want]
+    known = [n for g in groups for n in g]
+    unknown = sorted(set(want) - set(known))
+    if unknown:
+        raise SystemExit(f"--kernels: unknown or unbenchmarked {unknown}; choose from {known}")
+    return [[n for n in g if not want or n in want] for g in groups]
 
 
 def main():
@@ -73,18 +79,21 @@ def main():
     print(f"{'kernel':16}{'baseline(s)':>12}{'speedup':>10}   type")
     print("-" * 60)
     speeds = []
-    for name in selected(args, SINGLE):
+    singles, multis = selected(args, SINGLE, MULTI)
+    for name in singles:
         env = environment(name, args.size)
         sp = env.confirm(SINGLE[name], rounds=args.rounds, interleaved=True)
         if sp:
             speeds.append(sp)
             print(f"{name:16}{env.baseline()['time']:12.4f}{sp:9.2f}x   single", flush=True)
-    for name in selected(args, MULTI):
+    for name in multis:
         env = MultiEnvironment(sized_kernel(name, args.size))
         sp = env.confirm(MULTI[name], rounds=args.rounds, interleaved=True)
         if sp:
             speeds.append(sp)
             print(f"{name:16}{env.baseline()['time']:12.4f}{sp:9.2f}x   multi", flush=True)
+    if not speeds:
+        raise SystemExit("no kernel produced a speedup")
     gm = math.exp(sum(math.log(x) for x in speeds) / len(speeds))
     print("-" * 60)
     print(f"{'GEOMEAN':16}{'':12}{gm:9.2f}x   ({len(speeds)} kernels)")

@@ -158,6 +158,7 @@ def test_llm_requests_never_connect_link_local():          # DNS rebinding / red
     a 302 to the metadata endpoint can't get through."""
     import http.server
     import threading
+    import urllib.request
     from compilot import llm
     for addr in ("169.254.169.254", "2852039166", "::ffff:169.254.169.254", "fe80::1"):
         try:
@@ -189,11 +190,17 @@ def test_llm_requests_never_connect_link_local():          # DNS rebinding / red
     hdr = {"Content-Type": "application/json"}
     try:
         assert llm._http_post_json(base + "/v1", {}, hdr, timeout=5) == {"ok": True}
-        try:
-            llm._http_post_json(base + "/redirect", {}, hdr, timeout=5, retries=0)
-            raise AssertionError("redirect to the metadata endpoint was followed")
-        except llm.LinkLocalRefused:
-            pass
+        for direct in (False, True):
+            try:
+                llm._http_post_json(base + "/redirect", {}, hdr, timeout=5, retries=0, direct=direct)
+                raise AssertionError("redirect to the metadata endpoint was followed")
+            except llm.LinkLocalRefused:
+                pass
+        # caller-chosen endpoints never go through a proxy: the guard must see the real
+        # destination, not a proxy that would resolve and connect on our behalf
+        assert not any(isinstance(h, urllib.request.ProxyHandler) and h.proxies
+                       for h in llm._DIRECT_OPENER.handlers)
+        assert llm._http_post_json(base + "/v1", {}, hdr, timeout=5, direct=True) == {"ok": True}
     finally:
         srv.shutdown()
     print("OK LLM requests refuse link-local peers at connect time (rebinding, redirects)")

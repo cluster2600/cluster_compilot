@@ -77,21 +77,28 @@ class _GuardedHTTPSHandler(urllib.request.HTTPSHandler):
 
 
 # Every LLM request (and any redirect it follows) connects through the guard.
+# _OPENER honours HTTP(S)_PROXY — used for Gemini, whose host is fixed. Through a
+# proxy the guard can only vet the proxy, which then resolves and connects for us,
+# so user-supplied endpoints (the OpenAI-compatible base_url an MCP caller picks)
+# go through _DIRECT_OPENER: no proxy, the guard sees the real destination.
 _OPENER = urllib.request.build_opener(_GuardedHTTPHandler(), _GuardedHTTPSHandler(context=_SSL_CTX))
+_DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _GuardedHTTPHandler(),
+                                             _GuardedHTTPSHandler(context=_SSL_CTX))
 
 
-def _http_post_json(url, payload, headers, timeout, retries=2, backoff=0.5):
+def _http_post_json(url, payload, headers, timeout, retries=2, backoff=0.5, direct=False):
     """POST JSON and parse the JSON response, retrying transient failures (network
     errors, timeouts, HTTP 5xx) with exponential backoff. HTTP 4xx is NOT retried —
     a bad model name or malformed request won't fix itself — and is surfaced with
     the server's own message. Raises RuntimeError with a readable reason on failure.
+    direct=True ignores HTTP(S)_PROXY (see _DIRECT_OPENER).
     """
     data = json.dumps(payload).encode()
     last = None
     for attempt in range(retries + 1):
         try:
             req = urllib.request.Request(url, data=data, headers=headers)
-            with _OPENER.open(req, timeout=timeout) as resp:
+            with (_DIRECT_OPENER if direct else _OPENER).open(req, timeout=timeout) as resp:
                 return json.load(resp)
         except urllib.error.HTTPError as e:
             detail = e.read().decode(errors="replace")[:300]
@@ -149,6 +156,8 @@ class OpenAIClient:
     """OpenAI-compatible chat client over stdlib — one client for any local server
     that speaks /v1/chat/completions: Ollama (base_url .../v1), vLLM, NVIDIA NIM,
     LM Studio, llama.cpp. Same .chat(system, messages) + token counters as Gemini.
+    It connects to base_url directly, ignoring HTTP(S)_PROXY, so the link-local
+    guard checks the real destination (see _DIRECT_OPENER).
 
         OpenAIClient("qwen2.5-coder:32b", base_url="http://localhost:11434/v1")
     """
@@ -168,7 +177,8 @@ class OpenAIClient:
         if self.key:
             headers["Authorization"] = f"Bearer {self.key}"
         out = _http_post_json(f"{self.base_url}/chat/completions", body,
-                              headers, timeout=600)        # local models can be slow
+                              headers, timeout=600, direct=True)   # local models can be slow;
+        # direct: a caller-chosen base_url must not be fetched through a proxy (see _DIRECT_OPENER)
         try:
             text = out["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError):

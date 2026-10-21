@@ -42,11 +42,12 @@ def main():
     print("-" * 46)
     naive_all, comp_all = [], []
     # only the kernels with a defined NAIVE baseline (a subset of bench's SINGLE/MULTI)
-    for name in selected(args, NAIVE_SINGLE):
+    singles, multis = selected(args, NAIVE_SINGLE, NAIVE_MULTI)
+    for name in singles:
         n, c = sp_single(name, NAIVE_SINGLE[name], args), sp_single(name, SINGLE[name], args)
         naive_all.append(n); comp_all.append(c)
         print(f"{name:16}{n:8.2f}x{c:10.2f}x{c/n:8.2f}x")
-    for name in selected(args, NAIVE_MULTI):
+    for name in multis:
         n, c = sp_multi(name, NAIVE_MULTI[name], args), sp_multi(name, MULTI[name], args)
         naive_all.append(n); comp_all.append(c)
         print(f"{name:16}{n:8.2f}x{c:10.2f}x{c/n:8.2f}x")
