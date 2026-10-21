@@ -23,14 +23,13 @@ identity baseline; other legal transforms report "unsupported" (legality still
 proven). The point of this family is the legality engine REJECTING illegal
 parallelism on the sequential carried loop while ACCEPTING it on independent ones.
 """
+import threading
 from dataclasses import dataclass, field
-
-import islpy as isl
 
 from . import runner as _runner
 from . import schedule as _schedule
-from .backend_isl import Result
-from .polyhedral import PolyKernel, dependences, is_legal, is_parallel
+from .backend_isl import SCHEDULE_ERRORS, Result
+from .polyhedral import ISL_LOCK, PolyKernel, dependences, is_legal, is_parallel
 from .scheduler import build_theta
 
 _EXECUTABLE = {"parallel"}        # transforms the imperfect codegen can emit
@@ -142,44 +141,69 @@ class ImperfectEnvironment:
     def __init__(self, ik):
         self.ik = ik
         self.pk = ik.poly
-        self.D = dependences(ik.poly)
+        with ISL_LOCK:
+            self.D = dependences(ik.poly)
         self._baseline = None
+        self._baseline_lock = threading.Lock()
+
+    def baseline_program(self):
+        return _emit(self.ik, set())
 
     def baseline(self):
         if self._baseline is None:
-            r = _runner.compile_and_run(_emit(self.ik, set()))
-            if not r["ok"]:
-                raise RuntimeError(f"baseline failed: {r}")
-            self._baseline = r
+            with self._baseline_lock:
+                if self._baseline is None:
+                    r = _runner.compile_and_run(self.baseline_program())
+                    if not r["ok"]:
+                        raise RuntimeError(f"baseline failed: {r}")
+                    self._baseline = r
         return self._baseline
 
-    def evaluate(self, schedule_text) -> Result:
-        try:
-            ops = _schedule.parse(schedule_text)
-            theta, labels, par, _ = build_theta(self.pk, ops)
-        except (ValueError, IndexError, KeyError, isl.Error) as e:
-            return Result("invalid", detail=str(e), schedule=schedule_text)
-        legal, viol = is_legal(self.D, theta)
-        if not legal:
-            return Result("illegal", detail=f"violates dependences: {viol}", schedule=schedule_text)
-        parallel_vars = set()
-        for lbl, lvl in par:
-            if not is_parallel(self.D, theta, lvl):
-                return Result("parallel_illegal",
-                              detail=f"loop {lbl} carries a dependence; cannot parallelize",
-                              schedule=schedule_text)
-            parallel_vars.add(lbl)
+    def _check(self, schedule_text):
+        """Legality on the binding statement. Returns (program, None) or (None, Result)."""
+        with ISL_LOCK:                    # see polyhedral.ISL_LOCK
+            try:
+                ops = _schedule.parse(schedule_text)
+                theta, labels, par, _ = build_theta(self.pk, ops)
+            except SCHEDULE_ERRORS as e:
+                return None, Result("invalid", detail=str(e), schedule=schedule_text)
+            legal, viol = is_legal(self.D, theta)
+            if not legal:
+                return None, Result("illegal", detail=f"violates dependences: {viol}",
+                                    schedule=schedule_text)
+            parallel_vars = set()
+            for lbl, lvl in par:
+                if not is_parallel(self.D, theta, lvl):
+                    return None, Result("parallel_illegal",
+                                        detail=f"loop {lbl} carries a dependence; cannot parallelize",
+                                        schedule=schedule_text)
+                parallel_vars.add(lbl)
         used = {op for op, _ in ops}
         if not used <= _EXECUTABLE:
-            return Result("unsupported", detail=f"legal, but imperfect codegen lacks {used - _EXECUTABLE}",
-                          schedule=schedule_text)
+            return None, Result("unsupported",
+                                detail=f"legal, but imperfect codegen lacks {used - _EXECUTABLE}",
+                                schedule=schedule_text)
+        return _emit(self.ik, parallel_vars), None
+
+    def evaluate(self, schedule_text) -> Result:
+        program, failed = self._check(schedule_text)
+        if failed:
+            return failed
         base = self.baseline()
-        r = _runner.compile_and_run(_emit(self.ik, parallel_vars))
+        r = _runner.compile_and_run(program)
         if not r["ok"]:
             return Result(r["error"], detail=r.get("detail", ""), schedule=schedule_text)
         ref = base["checksum"]
-        if abs(r["checksum"] - ref) > 1e-6 * max(1.0, abs(ref)):
+        if not _runner.checksums_match(r["checksum"], ref):
             return Result("incorrect", detail=f"checksum {r['checksum']:.6e} != baseline {ref:.6e}",
                           schedule=schedule_text)
         return Result("success", speedup=base["time"] / r["time"],
                       detail=f"{base['time']:.4f}s -> {r['time']:.4f}s", schedule=schedule_text)
+
+    def confirm(self, schedule_text, rounds=_runner.CONFIRM_ROUNDS, interleaved=False):
+        """Re-measured speedup (see runner.confirm_speedup), or None."""
+        program, failed = self._check(schedule_text)
+        if failed:
+            return None
+        return _runner.confirm_speedup(self.baseline(), self.baseline_program(), program,
+                                       rounds, interleaved)

@@ -24,7 +24,10 @@ their legality and reports the measured speedup. You iterate using that feedback
   reverse(L)                     reverse loop L's iteration order
 
 Loop labels are the loop variable names shown in the nest. Tiling loop L creates
-an outer tile loop named L_t that you may then reorder/parallelize.
+a tile loop named L_t that you may then reorder/parallelize. Tile loops are placed
+together, in argument order, just outside the outermost tiled loop: on nest
+(i, k, j), tile2d(i, j, 32, 32) gives (i_t, j_t, i, k, j). Skew and reverse apply
+to the loop's current value, so skew + interchange expresses wavefronts.
 
 # Action space
 You may combine transformations, revoke previous ones (by re-proposing a new full

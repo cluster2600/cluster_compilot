@@ -16,8 +16,16 @@ Method (textbook polyhedral legality):
   - A schedule dimension p is PARALLEL iff no dependence is *carried* at p
     (equal in all outer dims, strictly increasing at p).
 """
+import threading
 from dataclasses import dataclass, field
 import islpy as isl
+
+# islpy builds every object in its process-global DEFAULT_CONTEXT, and ISL is not
+# thread-safe within one context. Every environment's polyhedral section (θ'
+# construction, legality, parallelism, AST codegen) runs under this one lock so
+# concurrent evaluate() calls (best-of-k, multi-candidate turns, MoA pools) are
+# safe. Compile + run happen outside it, in parallel.
+ISL_LOCK = threading.Lock()
 
 
 @dataclass

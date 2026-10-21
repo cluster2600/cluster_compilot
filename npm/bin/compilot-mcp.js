@@ -6,27 +6,22 @@
 //
 // Python resolution order:
 //   1. $COMPILOT_PYTHON                       (point this at your venv)
-//   2. ./.venv/bin/python                     (launched from a checkout)
-//   3. python3 / python                       (must have compilot installed)
+//   2. python3 / python                       (must have compilot installed)
+//
+// Nothing is resolved from the working directory: MCP clients start this server
+// in whatever project is open, so a ./.venv or ./compilot/ there must not be able
+// to substitute its own interpreter or package. Hence no ./.venv lookup, and `-P`
+// (Python 3.11+) keeps the cwd off sys.path for `-m`.
 
 const { spawn } = require("child_process");
-const { existsSync } = require("fs");
-const { join } = require("path");
 
 function findPython() {
   if (process.env.COMPILOT_PYTHON) return process.env.COMPILOT_PYTHON;
-  const venv = join(
-    process.cwd(),
-    ".venv",
-    process.platform === "win32" ? "Scripts" : "bin",
-    process.platform === "win32" ? "python.exe" : "python"
-  );
-  if (existsSync(venv)) return venv;
   return process.platform === "win32" ? "python" : "python3";
 }
 
 const py = findPython();
-const child = spawn(py, ["-m", "compilot.mcp_server", ...process.argv.slice(2)], {
+const child = spawn(py, ["-P", "-m", "compilot.mcp_server", ...process.argv.slice(2)], {
   stdio: "inherit",
 });
 

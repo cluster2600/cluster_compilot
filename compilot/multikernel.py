@@ -10,14 +10,14 @@ output's checksum guards correctness.
 (Loop fusion across statements — running them in a shared nest — is the next
 step, on top of polyhedral_multi's fusion legality.)
 """
+import threading
 from dataclasses import dataclass, field
-
-import islpy as isl
 
 from . import codegen as _cg
 from . import schedule as _schedule
 from . import runner as _runner
-from .polyhedral import PolyKernel, dependences, is_legal, is_parallel
+from .backend_isl import SCHEDULE_ERRORS
+from .polyhedral import ISL_LOCK, PolyKernel, dependences, is_legal, is_parallel
 from .scheduler import build_theta
 
 
@@ -46,8 +46,9 @@ class MultiKernel:
     final: str                  # output array used for the checksum
 
 
-def _emit_program(mk, scheds):
-    """Generate one C program running every statement (scheduled) in order, timed."""
+def _emit_program(mk, nests):
+    """Generate one C program running every statement in order, timed. nests[i] is
+    statement i's scheduled C nest (codegen.isl_nest), or None for its original nest."""
     outputs = set()
     for s in mk.statements:
         outputs.add(s.output)
@@ -66,15 +67,12 @@ def _emit_program(mk, scheds):
                               for a in none_outputs)
 
     body_lines = []
-    for s, sched in zip(mk.statements, scheds):
+    for s, nest in zip(mk.statements, nests):
         if s.reset != "none":
             for outp in [s.output, *s.extra_outputs]:
                 rhs = ("(double)((f_*13+7)%97)/97.0" if s.reset == "reinit" else "0.0")
                 body_lines.append(f"    for (long f_=0;f_<(long)({tot(outp)});f_++) {outp}[f_]={rhs};")
-        # reuse the single-statement nest emitter
-        fake = _Kernelish(s.loops, s.body)
-        levels = _cg._build_levels(fake, _schedule.parse(sched) if sched.strip() else [])
-        body_lines.append(_cg._emit_nest(fake, levels, indent="    "))
+        body_lines.append(nest if nest is not None else _cg.original_nest(s.loops, s.body))
 
     nest = "\n".join(body_lines)
     # position-weighted via a globally-incrementing weight w_ across all outputs, so a
@@ -91,7 +89,7 @@ def _emit_program(mk, scheds):
 #ifdef _OPENMP
 #include <omp.h>
 #endif
-#define MIN(a,b) ((a)<(b)?(a):(b))
+{_cg.PRELUDE}
 int main(void){{
 {sizes}
 {allocs}
@@ -121,39 +119,66 @@ class _Kernelish:
 class MultiEnvironment:
     def __init__(self, mk):
         self.mk = mk
-        self.deps = [dependences(s.poly) for s in mk.statements]
+        with ISL_LOCK:
+            self.deps = [dependences(s.poly) for s in mk.statements]
         self._baseline = None
+        self._baseline_lock = threading.Lock()
+
+    def baseline_program(self):
+        return _emit_program(self.mk, [None] * len(self.mk.statements))
 
     def baseline(self):
         if self._baseline is None:
-            r = _runner.compile_and_run(_emit_program(self.mk, ["" for _ in self.mk.statements]))
-            if not r["ok"]:
-                raise RuntimeError(f"baseline failed: {r}")
-            self._baseline = r
+            with self._baseline_lock:
+                if self._baseline is None:
+                    r = _runner.compile_and_run(self.baseline_program())
+                    if not r["ok"]:
+                        raise RuntimeError(f"baseline failed: {r}")
+                    self._baseline = r
         return self._baseline
+
+    def program(self, scheds):
+        """Per-statement legality + ISL codegen. Returns (program, None) or
+        (None, failure dict). An empty schedule keeps that statement's original nest."""
+        stmts = self.mk.statements
+        scheds = list(scheds)[:len(stmts)] + [""] * (len(stmts) - len(scheds))
+        nests = []
+        with ISL_LOCK:                    # see polyhedral.ISL_LOCK; MoA evaluates pools in parallel
+            try:
+                for s, D, sched in zip(stmts, self.deps, scheds):
+                    if not sched.strip():
+                        nests.append(None)
+                        continue
+                    theta, labels, par, unroll = build_theta(s.poly, _schedule.parse(sched))
+                    if not is_legal(D, theta)[0]:
+                        return None, {"status": "illegal", "stmt": s.output, "speedup": None}
+                    for lbl, lvl in par:
+                        if not is_parallel(D, theta, lvl):
+                            return None, {"status": "parallel_illegal", "stmt": s.output, "speedup": None}
+                    nests.append(_cg.isl_nest(s.poly, self.mk.sizes, s.body, theta, par, unroll))
+            except SCHEDULE_ERRORS as e:
+                return None, {"status": "invalid", "speedup": None, "detail": str(e)}
+        return _emit_program(self.mk, nests), None
 
     def evaluate(self, scheds):
         """scheds: list of schedule strings (one per statement)."""
-        try:
-            # per-statement legality
-            for s, D, sched in zip(self.mk.statements, self.deps, scheds):
-                if not sched.strip():
-                    continue
-                ops = _schedule.parse(sched)
-                theta, labels, par, _ = build_theta(s.poly, ops)
-                if not is_legal(D, theta)[0]:
-                    return {"status": "illegal", "stmt": s.output, "speedup": None}
-                for lbl, lvl in par:
-                    if not is_parallel(D, theta, lvl):
-                        return {"status": "parallel_illegal", "stmt": s.output, "speedup": None}
-            program = _emit_program(self.mk, scheds)
-        except (ValueError, IndexError, KeyError, isl.Error) as e:
-            return {"status": "invalid", "speedup": None, "detail": str(e)}
+        program, failed = self.program(scheds)
+        if failed:
+            return failed
         base = self.baseline()
         r = _runner.compile_and_run(program)
         if not r["ok"]:
             return {"status": r["error"], "speedup": None, "detail": r.get("detail", "")}
-        if abs(r["checksum"] - base["checksum"]) > 1e-6 * max(1.0, abs(base["checksum"])):
+        if not _runner.checksums_match(r["checksum"], base["checksum"]):
             return {"status": "incorrect", "speedup": None}
         return {"status": "success", "speedup": base["time"] / r["time"],
                 "detail": f"{base['time']:.4f}s -> {r['time']:.4f}s"}
+
+    def confirm(self, scheds, rounds=_runner.CONFIRM_ROUNDS, interleaved=False):
+        """Re-measured speedup (see runner.confirm_speedup), or None if the schedule
+        set is not legal and correct."""
+        program, failed = self.program(scheds)
+        if failed:
+            return None
+        return _runner.confirm_speedup(self.baseline(), self.baseline_program(), program,
+                                       rounds, interleaved)

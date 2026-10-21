@@ -1,7 +1,9 @@
 """Format a backend Result into the LLM feedback message (paper's Fig. 6).
 
 Five categories: invalid, illegal (incl. cannot-parallelize), compiler/runtime
-error, unsupported, and successful execution (with the measured speedup).
+error, unsupported, and successful execution (with the measured speedup). "Best so
+far" is the agent's confirmed best (re-measured against the baseline), which can
+be below a lucky single run.
 """
 
 _CONTINUE = ("\nIf a better schedule may exist, propose it. Otherwise output "
@@ -17,7 +19,7 @@ def format_candidates_feedback(scheds, results, best_so_far):
             lines.append(f"  [{i}] {r.speedup:.2f}x  {one}  ({r.detail})")
         else:
             lines.append(f"  [{i}] {r.status}: {r.detail}  [{one}]")
-    lines.append(f"Best so far: {best_so_far:.2f}x. Refine from the strongest candidate, "
+    lines.append(f"Best so far (re-measured): {best_so_far:.2f}x. Refine from the strongest candidate, "
                  f"or explore a new direction.")
     return "\n".join(lines) + _CONTINUE
 
@@ -28,7 +30,7 @@ def format_feedback(result, best_so_far=None):
         sp = result.speedup
         verdict = "a speedup" if sp >= 1.0 else "a SLOWDOWN"
         msg = (f"Legal schedule. It yielded {verdict} of {sp:.2f}x ({result.detail}). "
-               f"Best so far: {max(sp, best_so_far or sp):.2f}x.")
+               f"Best so far (re-measured): {best_so_far if best_so_far is not None else sp:.2f}x.")
     elif s == "illegal":
         msg = ("Illegal schedule: it violates data dependencies and was rejected by "
                "the legality checker. " + result.detail)

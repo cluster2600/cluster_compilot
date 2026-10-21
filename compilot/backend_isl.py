@@ -4,36 +4,42 @@ evaluate(schedule) does what Tiramisu does for ComPilot, via ISL + clang:
   1. parse the schedule
   2. prove legality with polyhedral dependence analysis (ISL)
   3. check each requested parallel() level is actually parallelizable
-  4. if legal: generate C, compile, run, and return the measured speedup
-     (cross-checking the output checksum against the untransformed baseline —
-      a second, independent correctness guard alongside polyhedral legality)
+  4. if legal: generate C from that same proven schedule (ISL AST generation),
+     compile, run, and return the measured speedup (cross-checking the output
+     checksum against the untransformed baseline — a second, independent
+     correctness guard alongside polyhedral legality)
+
+confirm(schedule) re-measures a schedule (median of fresh runs; or interleaved
+A/B rounds against the baseline) — the agent uses it on each new best, so the
+reported best is not just the luckiest of many noisy single runs.
 
 Returns a Result whose `status` is one of the paper's feedback categories.
 """
-import threading
 import islpy as isl
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from . import schedule as _schedule
 from . import codegen as _codegen
 from . import runner as _runner
-from .polyhedral import dependences, is_legal, is_parallel
+from .polyhedral import ISL_LOCK, dependences, is_legal, is_parallel
 from .scheduler import build_theta
 
-# islpy builds every object in its process-global DEFAULT_CONTEXT, and ISL is not
-# thread-safe within one context. evaluate() runs concurrently when the agent
-# fans out (parallel best-of-k / multi-candidate turns), so the polyhedral
-# section is serialized by this lock. The slow part — clang compile + run, a
-# subprocess that releases the GIL — stays OUTSIDE the lock and runs in parallel,
-# which is where the wall-clock speedup actually comes from.
-_ISL_LOCK = threading.Lock()
+# Kept under its old name for callers/docs; the one lock lives in polyhedral.
+_ISL_LOCK = ISL_LOCK
 
-# transforms the C codegen can currently emit (legality covers all 9; execution
-# of skew/reverse/fuse/shift is added with their codegen).
-_EXECUTABLE = {"interchange", "reorder", "tile", "tile2d", "tile3d", "parallel", "unroll", "reverse", "skew"}
+# Errors a malformed schedule can raise anywhere in parse -> θ' -> AST codegen
+# (too few args, bad loop name, non-numeric factor, ISL rejecting an expression).
+SCHEDULE_ERRORS = (ValueError, IndexError, KeyError, isl.Error)
+
+# Memoized schedule results kept per Environment (LRU). Bounded because an
+# Environment can live as long as its process (the MCP server keeps one per
+# kernel+size), and a dialogue only ever revisits a handful of schedules.
+CACHE_MAX = 256
 
 
 def environment(name, size="LARGE"):
-    """Build an Environment for a registered kernel name at a PolyBench size class.
+    """Build an Environment for a registered kernel name at a size class.
 
     Imperfect-nest kernels (solvers) get an ImperfectEnvironment, which exposes the
     same .pk/.baseline()/.evaluate() interface, so the single-statement agent
@@ -61,11 +67,15 @@ class Environment:
     def __init__(self, exec_kernel, poly_kernel):
         self.ek = exec_kernel
         self.pk = poly_kernel
-        self.D = dependences(poly_kernel)
+        with ISL_LOCK:
+            self.D = dependences(poly_kernel)
         self._baseline = None
         self._baseline_lock = threading.Lock()
-        self._cache = {}                          # schedule key -> Result (shared across the search)
+        self._cache = OrderedDict()               # schedule key -> Result, LRU-bounded by CACHE_MAX
         self._cache_lock = threading.Lock()
+
+    def baseline_program(self):
+        return _codegen.generate_c(self.ek, "")
 
     def baseline(self):
         # Compiled once and shared across concurrent runs. Pre-warm by calling this
@@ -75,7 +85,7 @@ class Environment:
         if self._baseline is None:
             with self._baseline_lock:
                 if self._baseline is None:
-                    r = _runner.compile_and_run(_codegen.generate_c(self.ek, ""))
+                    r = _runner.compile_and_run(self.baseline_program())
                     if not r["ok"]:
                         raise RuntimeError(f"baseline failed: {r}")
                     self._baseline = r
@@ -84,57 +94,75 @@ class Environment:
     def evaluate(self, schedule_text) -> Result:
         """Memoized: the same schedule (whitespace-insensitive) is compiled and timed
         once, then its Result is reused across the whole parallel search. Skips the
-        redundant clang compile + timed run when runs/candidates re-propose a schedule."""
+        redundant clang compile + timed run when runs/candidates re-propose a schedule.
+        The memo keeps the CACHE_MAX most recently used schedules."""
         key = "".join(schedule_text.split())
         with self._cache_lock:
             hit = self._cache.get(key)
-        if hit is not None:
-            return hit
+            if hit is not None:
+                self._cache.move_to_end(key)
+                return hit
         result = self._evaluate(schedule_text)
         with self._cache_lock:
             # ponytail: a rare duplicate compile if two threads miss at once; setdefault
             # makes them converge on one stored Result rather than locking the whole eval.
-            return self._cache.setdefault(key, result)
+            result = self._cache.setdefault(key, result)
+            self._cache.move_to_end(key)
+            while len(self._cache) > CACHE_MAX:
+                self._cache.popitem(last=False)
+            return result
 
-    def _evaluate(self, schedule_text) -> Result:
-        try:
-            ops = _schedule.parse(schedule_text)
-        except ValueError as e:
-            return Result("invalid", detail=str(e), schedule=schedule_text)
+    def _check(self, schedule_text):
+        """Parse, prove legality, generate C. Returns (program, None) or (None, Result).
 
-        # --- polyhedral legality (all 9 primitives) ---
-        # Serialized: build_theta + is_legal + is_parallel all operate on islpy
-        # objects in the shared DEFAULT_CONTEXT, which is not thread-safe. This is
-        # the fast part (microseconds-milliseconds); the lock is released before
-        # the expensive compile+run below so those proceed in parallel.
-        with _ISL_LOCK:
+        Serialized: θ' construction, legality, parallelism and AST codegen all use
+        islpy objects in the shared context, which is not thread-safe. This is the
+        fast part (milliseconds); the lock is released before the expensive
+        compile+run, so those proceed in parallel."""
+        with ISL_LOCK:
             try:
+                ops = _schedule.parse(schedule_text)
                 theta, labels, par, unroll = build_theta(self.pk, ops)
-            except (ValueError, IndexError, KeyError, isl.Error) as e:
-                # malformed schedule (too few args, bad loop name, non-numeric factor)
-                return Result("invalid", detail=str(e), schedule=schedule_text)
+            except SCHEDULE_ERRORS as e:
+                return None, Result("invalid", detail=str(e), schedule=schedule_text)
             legal, viol = is_legal(self.D, theta)
             if not legal:
-                return Result("illegal", detail=f"violates dependences: {viol}", schedule=schedule_text)
+                return None, Result("illegal", detail=f"violates dependences: {viol}",
+                                    schedule=schedule_text)
             for lbl, lvl in par:
                 if not is_parallel(self.D, theta, lvl):
-                    return Result("parallel_illegal",
-                                  detail=f"loop {lbl} carries a dependence; cannot parallelize",
-                                  schedule=schedule_text)
+                    return None, Result("parallel_illegal",
+                                        detail=f"loop {lbl} carries a dependence; cannot parallelize",
+                                        schedule=schedule_text)
+            try:
+                nest = _codegen.isl_nest(self.pk, self.ek.sizes, self.ek.body, theta, par, unroll)
+            except SCHEDULE_ERRORS as e:
+                return None, Result("invalid", detail=str(e), schedule=schedule_text)
+        return _codegen.program(self.ek, nest), None
 
-        # --- execution / measurement ---
-        used = {op for op, _ in ops}
-        if not used <= _EXECUTABLE:
-            return Result("unsupported", detail=f"legal, but codegen lacks {used - _EXECUTABLE}",
-                          schedule=schedule_text)
+    def _evaluate(self, schedule_text) -> Result:
+        program, failed = self._check(schedule_text)
+        if failed:
+            return failed
         base = self.baseline()
-        r = _runner.compile_and_run(_codegen.generate_c(self.ek, schedule_text))
+        r = _runner.compile_and_run(program)
         if not r["ok"]:
             return Result(r["error"], detail=r.get("detail", ""), schedule=schedule_text)
         ref = base["checksum"]
-        if abs(r["checksum"] - ref) > 1e-6 * max(1.0, abs(ref)):
+        if not _runner.checksums_match(r["checksum"], ref):
             return Result("incorrect",
                           detail=f"checksum {r['checksum']:.6e} != baseline {ref:.6e} "
-                                 f"(ISL said legal — codegen bug)", schedule=schedule_text)
+                                 f"(ISL said legal — polyhedral spec and C body disagree)",
+                          schedule=schedule_text)
         return Result("success", speedup=base["time"] / r["time"],
                       detail=f"{base['time']:.4f}s -> {r['time']:.4f}s", schedule=schedule_text)
+
+    def confirm(self, schedule_text, rounds=_runner.CONFIRM_ROUNDS, interleaved=False):
+        """Re-measured speedup of `schedule_text` (runner.confirm_speedup: median of
+        `rounds` fresh runs, or interleaved A/B rounds), or None if it is not a
+        legal, correct schedule."""
+        program, failed = self._check(schedule_text)
+        if failed:
+            return None
+        return _runner.confirm_speedup(self.baseline(), self.baseline_program(), program,
+                                       rounds, interleaved)

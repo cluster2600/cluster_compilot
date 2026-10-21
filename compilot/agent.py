@@ -4,6 +4,11 @@ run_dialogue drives one LLM<->compiler conversation (the paper's iterative
 optimization phase): present the nest, parse each <schedule> proposal, evaluate
 it in the environment, feed the outcome back, keep the best legal speedup, stop
 on the stop-token / iteration cap. best_of_k repeats for multi-run (Fig. RQ9).
+
+A single timed run is noisy, so a raw speedup that would set a new best is first
+re-measured with env.confirm (median of fresh runs of that schedule) and the
+confirmed number is what's kept — otherwise the search would report the luckiest
+of many noisy samples. At most one confirmation per turn.
 """
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -12,6 +17,37 @@ from . import feedback as _feedback
 from . import prompt as _prompt
 
 _SCHED = re.compile(r"<schedule>(.*?)</schedule>", re.S)
+
+
+class _Confirmer:
+    """Confirmed (re-measured) speedup per schedule, memoized for one dialogue.
+    Environments without confirm() fall back to the raw number."""
+
+    def __init__(self, env):
+        self.fn = getattr(env, "confirm", None)
+        self.seen = {}
+
+    def __call__(self, sched, raw):
+        if self.fn is None:
+            return raw
+        key = tuple("".join(b.split()) for b in sched) if isinstance(sched, (list, tuple)) \
+            else "".join(sched.split())
+        if key not in self.seen:
+            sp = self.fn(sched)
+            self.seen[key] = sp if sp is not None else 0.0
+        return self.seen[key]
+
+
+def _accept(confirm, wins, best_sp, best):
+    """wins: [(raw_speedup, schedule)] measured this turn. Confirm the top raw one if
+    it beats best_sp; return the (possibly updated) (best_sp, best)."""
+    if wins:
+        raw, sched = max(wins, key=lambda w: w[0])
+        if raw > best_sp:
+            sp = confirm(sched, raw)
+            if sp > best_sp:
+                return sp, sched
+    return best_sp, best
 
 
 def parse_response(text):
@@ -40,6 +76,7 @@ def run_dialogue(env, llm, max_iters=30, verbose=True, candidates_per_turn=1, ta
     messages = [("user", _prompt.kernel_message(env))]
     best_sp, best_sched = 1.0, ""
     trace = []
+    confirm = _Confirmer(env)
     for it in range(max_iters):
         resp = llm.chat(_prompt.SYSTEM, messages)
         messages.append(("model", resp))
@@ -55,8 +92,8 @@ def run_dialogue(env, llm, max_iters=30, verbose=True, candidates_per_turn=1, ta
         trace.append((sched, result.status, result.speedup))
         if on_eval:
             on_eval(sched, result.status, result.speedup)
-        if result.status == "success" and result.speedup > best_sp:
-            best_sp, best_sched = result.speedup, sched
+        if result.status == "success":
+            best_sp, best_sched = _accept(confirm, [(result.speedup, sched)], best_sp, best_sched)
         if verbose:
             sp = f"{result.speedup:.2f}x" if result.speedup else "  -  "
             print(f"{lead}iter {it}: [{result.status:16}] {sp:>7}  best={best_sp:.2f}x")
@@ -73,6 +110,7 @@ def _run_dialogue_candidates(env, llm, max_iters, verbose, n, tag, on_eval=None)
     messages = [("user", _prompt.kernel_message(env) + _prompt.multi_candidate_hint(n))]
     best_sp, best_sched = 1.0, ""
     trace = []
+    confirm = _Confirmer(env)
     for it in range(max_iters):
         resp = llm.chat(_prompt.SYSTEM, messages)
         messages.append(("model", resp))
@@ -91,8 +129,8 @@ def _run_dialogue_candidates(env, llm, max_iters, verbose, n, tag, on_eval=None)
             trace.append((sched, result.status, result.speedup))
             if on_eval:
                 on_eval(sched, result.status, result.speedup)
-            if result.status == "success" and result.speedup > best_sp:
-                best_sp, best_sched = result.speedup, sched
+        best_sp, best_sched = _accept(confirm, [(r.speedup, s) for s, r in zip(cands, results)
+                                                if r.status == "success"], best_sp, best_sched)
         if verbose:
             summ = "  ".join(
                 (f"{r.speedup:.2f}x" if r.status == "success" and r.speedup else r.status)
@@ -120,6 +158,7 @@ def run_dialogue_moa(env, references, aggregator, max_iters=30, verbose=True,
     messages = [("user", _prompt.kernel_message(env) + _prompt.multi_candidate_hint(candidates_per_turn))]
     best_sp, best_sched = 1.0, ""
     trace = []
+    confirm = _Confirmer(env)
     for it in range(max_iters):
         with ThreadPoolExecutor(max_workers=len(references)) as ex:   # references propose in parallel
             ref_resps = list(ex.map(lambda c: c.chat(_prompt.SYSTEM, messages), references))
@@ -153,8 +192,8 @@ def run_dialogue_moa(env, references, aggregator, max_iters=30, verbose=True,
             trace.append((sched, result.status, result.speedup))
             if on_eval:
                 on_eval(sched, result.status, result.speedup)
-            if result.status == "success" and result.speedup > best_sp:
-                best_sp, best_sched = result.speedup, sched
+        best_sp, best_sched = _accept(confirm, [(r.speedup, s) for s, r in zip(pool, results)
+                                                if r.status == "success"], best_sp, best_sched)
         if verbose:
             summ = "  ".join(
                 (f"{r.speedup:.2f}x" if r.status == "success" and r.speedup else r.status)
@@ -168,7 +207,7 @@ def _multi_feedback(r, best):
     s = r["status"]
     if s == "success":
         return (f"Legal. Combined speedup {r['speedup']:.2f}x ({r.get('detail','')}). "
-                f"Best so far {max(r['speedup'], best):.2f}x." + _feedback._CONTINUE)
+                f"Best so far (re-measured) {best:.2f}x." + _feedback._CONTINUE)
     if s in ("illegal", "parallel_illegal"):
         return (f"Illegal schedule for statement writing `{r.get('stmt','?')}`: {s}. "
                 f"Fix that statement's schedule." + _feedback._CONTINUE)
@@ -180,6 +219,7 @@ def run_dialogue_multi(menv, llm, max_iters=30, verbose=True, on_eval=None):
     n = len(menv.mk.statements)
     messages = [("user", _prompt.kernel_message_multi(menv))]
     best_sp, best = 1.0, None
+    confirm = _Confirmer(menv)
     for it in range(max_iters):
         resp = llm.chat(_prompt.SYSTEM, messages)
         messages.append(("model", resp))
@@ -193,8 +233,8 @@ def run_dialogue_multi(menv, llm, max_iters=30, verbose=True, on_eval=None):
         r = menv.evaluate(scheds)
         if on_eval:
             on_eval(" | ".join(s or "(identity)" for s in scheds), r["status"], r.get("speedup"))
-        if r["status"] == "success" and r["speedup"] > best_sp:
-            best_sp, best = r["speedup"], scheds
+        if r["status"] == "success":
+            best_sp, best = _accept(confirm, [(r["speedup"], scheds)], best_sp, best)
         if verbose:
             sp = f"{r['speedup']:.2f}x" if r.get("speedup") else "  -  "
             print(f"  iter {it}: [{r['status']:16}] {sp:>7}  best={best_sp:.2f}x")
@@ -234,6 +274,7 @@ def run_dialogue_moa_multi(menv, references, aggregator, max_iters=30, verbose=T
     lead = f"{tag}  " if tag else "  "
     messages = [("user", _prompt.kernel_message_multi(menv))]
     best_sp, best = 1.0, None
+    confirm = _Confirmer(menv)
     for it in range(max_iters):
         with ThreadPoolExecutor(max_workers=len(references)) as ex:
             ref_resps = list(ex.map(lambda c: c.chat(_prompt.SYSTEM, messages), references))
@@ -262,8 +303,9 @@ def run_dialogue_moa_multi(menv, references, aggregator, max_iters=30, verbose=T
         for st, r in zip(pool, results):
             if on_eval:
                 on_eval(" | ".join(s or "(identity)" for s in st), r["status"], r.get("speedup"))
-            if r["status"] == "success" and r.get("speedup") and r["speedup"] > best_sp:
-                best_sp, best = r["speedup"], st
+        best_sp, best = _accept(confirm, [(r["speedup"], st) for st, r in zip(pool, results)
+                                          if r["status"] == "success" and r.get("speedup")],
+                                best_sp, best)
         if verbose:
             summ = "  ".join((f"{r['speedup']:.2f}x" if r.get("speedup") else r["status"]) for r in results)
             print(f"{lead}iter {it}: {len(references)} refs -> {len(pool)} sets [{summ}]  best={best_sp:.2f}x")
