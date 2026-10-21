@@ -82,7 +82,9 @@ from compilot.backend_isl import environment
 env = environment("gemm")
 r = env.evaluate("reorder(i, k, j)\ntile2d(i, j, 64, 64)\nparallel(i_t)")
 print(r.status, r.speedup)        # success <one noisy run>
-print(env.confirm("reorder(i, k, j)\ntile2d(i, j, 64, 64)\nparallel(i_t)"))   # median of 5 A/B rounds
+sched = "reorder(i, k, j)\ntile2d(i, j, 64, 64)\nparallel(i_t)"
+print(env.confirm(sched))                    # median of 5 fresh runs vs the cached baseline
+print(env.confirm(sched, interleaved=True))  # median of 5 alternating baseline/candidate rounds
 ```
 
 ## Add your own kernel
