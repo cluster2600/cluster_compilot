@@ -14,7 +14,7 @@ from compilot.imperfect import ImperfectEnvironment
 from compilot.kernels import IMPERFECT_REGISTRY, sized_kernel
 
 
-def _env(name, size="SMALL"):
+def _env(name, size="MINI"):        # correctness, not timing: PolyBench MINI keeps it quick
     return ImperfectEnvironment(sized_kernel(name, size))
 
 

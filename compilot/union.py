@@ -97,7 +97,10 @@ def loop_is_parallel(prog, D, theta, times, p, key):
     """No dependence between instances inside this one loop is carried by it.
     Restricting D to the loop's own statements matters: is_parallel on the whole
     union would also see other loops that happen to sit at the same depth."""
-    dom = prog.dom_of(loop_members(prog, times, p, key))
+    members = loop_members(prog, times, p, key)
+    if not members:            # a key that matches no loop must never pass as "parallel"
+        raise ValueError(f"no statement is inside a depth-{p} loop with betas {key}")
+    dom = prog.dom_of(members)
     return is_parallel(D.intersect_domain(dom).intersect_range(dom), theta, 2 * p + 1)
 
 
@@ -358,7 +361,7 @@ def fused_nest(items, scheds, sizes, arrays, cache, indent="    "):
     for k, (b, exprs, labels, par, unroll) in enumerate(per):
         for lbl, q in par:
             key = (q, betas(times[k], q))
-            if not loop_is_parallel(prog, D, theta, times, q, key):
+            if not loop_is_parallel(prog, D, theta, times, q, key[1]):
                 return None, {"status": "parallel_illegal", "stmt": k, "speedup": None,
                               "detail": f"loop {lbl} of statement {k} carries a dependence"}
             lines = pragmas.setdefault(key, [])
