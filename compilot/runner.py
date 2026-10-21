@@ -152,6 +152,8 @@ def checksums_match(a, b):
 def rerun(c_code, runs=CONFIRM_ROUNDS, threads=None, timeout=None):
     """Compile once, run `runs` times. dict(ok, time=median, times, checksum) or an
     error dict; every run must print the same checksum."""
+    if runs < 1:
+        raise ValueError(f"rerun needs at least one run, got {runs}")
     timeout = timeout or RUN_TIMEOUT
     d = tempfile.mkdtemp(prefix="compilot_rr_")
     try:
@@ -190,6 +192,8 @@ def ab_speedup(base_code, cand_code, rounds=CONFIRM_ROUNDS, threads=None, timeou
     order (ABBA...) for `rounds` pairs, so drift (thermal, frequency, background
     load) hits both alike. Returns dict(ok, speedup=median(base/cand), ratios,
     base_time, time) or an error dict; checks every candidate checksum."""
+    if rounds < 1:
+        raise ValueError(f"ab_speedup needs at least one round, got {rounds}")
     timeout = timeout or RUN_TIMEOUT
     d = tempfile.mkdtemp(prefix="compilot_ab_")
     try:

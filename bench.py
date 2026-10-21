@@ -45,14 +45,21 @@ MULTI = {
 }
 
 
+def _positive(text):
+    n = int(text)
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"must be a positive integer, got {n}")
+    return n
+
+
 def args_parser(doc):
     ap = argparse.ArgumentParser(description=doc.splitlines()[0])
     ap.add_argument("--size", default="LARGE", choices=SIZE_NAMES,
                     help="PolyBench dataset class (default LARGE) or DEFAULT (built-in sizes)")
-    ap.add_argument("--rounds", type=int, default=CONFIRM_ROUNDS,
+    ap.add_argument("--rounds", type=_positive, default=CONFIRM_ROUNDS,
                     help="alternating baseline/candidate run pairs per kernel")
     ap.add_argument("--kernels", default="", help="comma-separated subset (default: all)")
-    ap.add_argument("--timeout", type=int, default=runner.RUN_TIMEOUT,
+    ap.add_argument("--timeout", type=_positive, default=runner.RUN_TIMEOUT,
                     help="seconds per compile / run (naive LARGE baselines can take minutes)")
     return ap
 
