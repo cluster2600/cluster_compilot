@@ -89,6 +89,17 @@ print(env.confirm(sched))                    # median of 5 fresh runs vs the cac
 print(env.confirm(sched, interleaved=True))  # median of 5 alternating baseline/candidate rounds
 ```
 
+Multi-statement and stencil kernels take one schedule per statement; `fuse(L)` runs a statement inside the previous one's loops (checked against every dependence between them):
+
+```python
+from compilot.kernels import sized_kernel
+from compilot.multikernel import MultiEnvironment
+from compilot.stencil import StencilEnvironment
+MultiEnvironment(sized_kernel("2mm")).evaluate(["", "fuse(i)"])          # success: row i of D needs row i of tmp
+MultiEnvironment(sized_kernel("2mm")).evaluate(["", "fuse(j)"])          # illegal
+StencilEnvironment(sized_kernel("jacobi1d")).evaluate(["", "shift(i, 1)\nfuse(i)"])   # success
+```
+
 ## Add your own kernel
 
 In `compilot/kernels.py`, pair an execution spec (`Kernel`) with a polyhedral spec (`PolyKernel`) and register it:
