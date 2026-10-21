@@ -1,26 +1,26 @@
 # Roadmap
 
-Where the project goes after 0.3.0, in priority order. Each item says why it is there, which piece of evidence it rests on, and when it counts as done. Written 2026-10-21, against `main` at `362a080`.
+Where the project goes after 0.3.0, in priority order. Each item says why it is there, which piece of evidence it rests on, and when it counts as done. Written 2026-10-21, against `main` at `362a080`. Items 1, 2 and 4 are done in 0.3.1. Item 3's publishing workflow is in place and goes live once PyPI and npm are set to trust it.
 
 The order follows one rule: **make the numbers trustworthy and comparable before adding features that are supposed to move them.** At the moment the Linux figures come from a busy host, and the live-LLM and Apple Silicon figures predate real tiling. The only baseline is naive auto-parallelization. Until that changes, there is no way to tell whether a new transform helps.
 
-| # | Milestone | Item | Size | Waits on |
-|---|---|---|---|---|
-| 1 | 0.3.1 | Python 3.15 in CI | S | — |
-| 2 | 0.3.1 | Remove `polyhedral_multi.py` | S | — |
-| 3 | 0.3.1 | Publish to PyPI; npm via trusted publishing | M | PyPI and npmjs.com settings (owner) |
-| 4 | 0.3.1 | Review the commits that never got a review pass | S | — |
-| 5 | 0.4.0 | Polly baseline | M | — |
-| 6 | 0.4.0 | Machine-readable benchmark output | S | — |
-| 7 | 0.4.0 | Quiet-machine numbers (Apple Silicon) + Tiramisu parity | S | the Mac |
-| 8 | 0.4.0 | Live LLM evaluation at 0.3.x | M | a Gemini key |
-| 9 | 0.5.0 | Parallel reductions | L | 5, 6 |
-| 10 | 0.5.0 | Tiling and interchange for imperfect nests | L | 5, 6 |
-| 11 | later | Tiramisu parity in CI | L | — |
-| 12 | later | Free-threaded 3.15t | S | islpy `cp315t` wheel |
-| 13 | later | Benchmark history on a dedicated runner | M | 6, a runner |
-| 14 | later | `vectorize` primitive | M | 5 (measure first) |
-| 15 | later | Remaining research questions from the paper | L | 8 |
+| # | Milestone | Item | Size | Waits on | Status |
+|---|---|---|---|---|---|
+| 1 | 0.3.1 | Python 3.15 in CI | S | — | done (0.3.1) |
+| 2 | 0.3.1 | Remove `polyhedral_multi.py` | S | — | done (0.3.1) |
+| 3 | 0.3.1 | Publish to PyPI; npm via trusted publishing | M | PyPI and npmjs.com settings (owner) | workflow ready; registries to configure |
+| 4 | 0.3.1 | Review the commits that never got a review pass | S | — | done (0.3.1) |
+| 5 | 0.4.0 | Polly baseline | M | — |  |
+| 6 | 0.4.0 | Machine-readable benchmark output | S | — |  |
+| 7 | 0.4.0 | Quiet-machine numbers (Apple Silicon) + Tiramisu parity | S | the Mac |  |
+| 8 | 0.4.0 | Live LLM evaluation at 0.3.x | M | a Gemini key |  |
+| 9 | 0.5.0 | Parallel reductions | L | 5, 6 |  |
+| 10 | 0.5.0 | Tiling and interchange for imperfect nests | L | 5, 6 |  |
+| 11 | later | Tiramisu parity in CI | L | — |  |
+| 12 | later | Free-threaded 3.15t | S | islpy `cp315t` wheel |  |
+| 13 | later | Benchmark history on a dedicated runner | M | 6, a runner |  |
+| 14 | later | `vectorize` primitive | M | 5 (measure first) |  |
+| 15 | later | Remaining research questions from the paper | L | 8 |  |
 
 ## 0.3.1: quick wins
 
@@ -42,7 +42,7 @@ The order follows one rule: **make the numbers trustworthy and comparable before
 **5. Polly baseline.** The README says Pluto does not build, so `baselines.py` compares against naive auto-parallelization instead. However, the Docker image's clang 19 already includes Polly (`/usr/lib/llvm-19/lib/LLVMPolly.so`), which is a real polyhedral optimizer. A quick probe in the image on a 1024³ gemm (busy host, two runs each):
 
 | Build | Time |
-|---|---|
+|---|---|---|
 | `clang -O3 -fopenmp` | 6.3–14.4 s |
 | `+ -mllvm -polly -mllvm -polly-parallel` | 0.27–0.29 s |
 
@@ -50,7 +50,8 @@ ComPilot's gemm at LARGE measured 10.4× in the same environment, so Polly may w
 *Done when:* `baselines.py` has a Polly column for every kernel at LARGE, taken with the same interleaved-median harness, and the README's baseline paragraph reports it.
 
 **6. Machine-readable benchmark output.** `bench.py` and `baselines.py` print tables only. With a `--json` option, results from different hosts and versions could be diffed and kept in the repo (for example `docs/results/<version>-<host>.json`) instead of being copied into prose by hand.
-*Done when:* both scripts write JSON with per-kernel medians, the spread, thread count, host load and dataset, and the README numbers are generated from those files.
+The same change should repeat short kernels inside one timed run: at LARGE atax, bicg and gesummv take 4–9 ms per run, and gesummv's `parallel(i)` schedule measured 0.95× in `bench.py` but 8.60× in `baselines.py` in the same session.
+*Done when:* both scripts write JSON with per-kernel medians, the spread, thread count, host load and dataset; every timed run lasts at least ~0.1 s; and the README numbers are generated from those files.
 
 **7. Quiet-machine numbers and Tiramisu parity.** Every Linux number since 0.3.0 comes from a WSL host that was busy at the time; there, even A/A runs of a single binary vary from 0.25× to 3.8×. The Apple Silicon figures in the README (gemm ~26–31×, geomean ~5×) predate real tiling and interleaved medians. The Tiramisu backend is built only on the Mac, and CI skips its test, so ISL↔Tiramisu parity (4/4) has not been re-checked since `tile2d`/`tile3d` changed meaning in 0.3.0.
 *Done when:* `bench.py` and `baselines.py` (at LARGE) and `tests.test_tiramisu_parity` have been re-run on the Mac, and their output replaces the pre-0.3 numbers.
