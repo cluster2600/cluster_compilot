@@ -24,14 +24,24 @@ except ImportError:
 
 
 class LinkLocalRefused(RuntimeError):
-    """Raised instead of connecting to a link-local address (169.254/16, fe80::/10)."""
+    """Raised instead of connecting to a link-local (169.254/16, fe80::/10) or other
+    cloud instance-metadata address."""
 
 
-def _is_link_local(addr):
-    ip = ipaddress.ip_address(addr.split("%", 1)[0])
+# Instance-metadata endpoints outside the link-local ranges.
+METADATA_ADDRESSES = frozenset(ipaddress.ip_address(a) for a in (
+    "fd00:ec2::254",        # AWS EC2 IMDS over IPv6 (a unique-local address)
+    "100.100.100.200",      # Alibaba Cloud ECS metadata (shared address space)
+))
+
+
+def is_blocked_address(addr):
+    """True for addresses an LLM request must never reach: link-local, or a known
+    cloud metadata endpoint (also when written as an IPv4-mapped IPv6 address)."""
+    ip = ipaddress.ip_address(str(addr).split("%", 1)[0])
     if getattr(ip, "ipv4_mapped", None):
         ip = ip.ipv4_mapped
-    return ip.is_link_local
+    return ip.is_link_local or ip in METADATA_ADDRESSES
 
 
 def _guarded_create_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
@@ -39,12 +49,14 @@ def _guarded_create_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
     """socket.create_connection that resolves once, refuses if ANY address is
     link-local (cloud metadata lives there), and connects to the very addresses it
     checked — so a DNS answer that changes after mcp_server._check_base_url (DNS
-    rebinding) or a redirect to a metadata URL can't reach link-local."""
+    rebinding) or a redirect to a metadata URL can't reach link-local or a known
+    metadata address (is_blocked_address)."""
     host, port = address[0], address[1]
     infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     for *_, sockaddr in infos:
-        if _is_link_local(sockaddr[0]):
-            raise LinkLocalRefused(f"refusing to connect to {host} -> {sockaddr[0]} (link-local)")
+        if is_blocked_address(sockaddr[0]):
+            raise LinkLocalRefused(f"refusing to connect to {host} -> {sockaddr[0]} "
+                                   f"(link-local / cloud metadata)")
     err = None
     for family, socktype, proto, _, sockaddr in infos:
         try:

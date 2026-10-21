@@ -140,7 +140,9 @@ def test_mcp_base_url_rejects_ssrf():                    # cso hardening
     from compilot.mcp_server import _check_base_url
     for bad in ("ftp://x/v1", "file:///etc/passwd", "http://169.254.169.254/v1", "http://[fe80::1]/v1",
                 # numeric spellings of 169.254.169.254 that only resolution catches
-                "http://2852039166/v1", "http://0xa9fea9fe/v1", "http://[::ffff:169.254.169.254]/v1"):
+                "http://2852039166/v1", "http://0xa9fea9fe/v1", "http://[::ffff:169.254.169.254]/v1",
+                # metadata endpoints outside the link-local ranges (AWS IPv6, Alibaba)
+                "http://[fd00:ec2::254]/latest", "http://100.100.100.200/latest"):
         try:
             _check_base_url(bad)
         except ValueError:
@@ -160,7 +162,8 @@ def test_llm_requests_never_connect_link_local():          # DNS rebinding / red
     import threading
     import urllib.request
     from compilot import llm
-    for addr in ("169.254.169.254", "2852039166", "::ffff:169.254.169.254", "fe80::1"):
+    for addr in ("169.254.169.254", "2852039166", "::ffff:169.254.169.254", "fe80::1",
+                 "fd00:ec2::254", "100.100.100.200"):
         try:
             llm._guarded_create_connection((addr, 80), 1)
         except llm.LinkLocalRefused:
