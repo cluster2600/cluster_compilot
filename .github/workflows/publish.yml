@@ -59,6 +59,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm
     permissions:
+      contents: read      # job-level permissions replace the workflow's: checkout needs this
       id-token: write
     defaults:
       run:
