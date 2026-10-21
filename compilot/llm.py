@@ -2,8 +2,11 @@
 install. MockClient scripts a dialogue so the whole agent loop is testable with
 no key. Both expose .chat(system, messages) and token counters (for RQ2 cost).
 """
+import http.client
+import ipaddress
 import json
 import os
+import socket
 import ssl
 import time
 import urllib.error
@@ -20,6 +23,63 @@ except ImportError:
     _SSL_CTX = ssl.create_default_context()
 
 
+class LinkLocalRefused(RuntimeError):
+    """Raised instead of connecting to a link-local address (169.254/16, fe80::/10)."""
+
+
+def _is_link_local(addr):
+    ip = ipaddress.ip_address(addr.split("%", 1)[0])
+    if getattr(ip, "ipv4_mapped", None):
+        ip = ip.ipv4_mapped
+    return ip.is_link_local
+
+
+def _guarded_create_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
+                               source_address=None, *args, **kwargs):
+    """socket.create_connection that resolves once, refuses if ANY address is
+    link-local (cloud metadata lives there), and connects to the very addresses it
+    checked — so a DNS answer that changes after mcp_server._check_base_url (DNS
+    rebinding) or a redirect to a metadata URL can't reach link-local."""
+    host, port = address[0], address[1]
+    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    for *_, sockaddr in infos:
+        if _is_link_local(sockaddr[0]):
+            raise LinkLocalRefused(f"refusing to connect to {host} -> {sockaddr[0]} (link-local)")
+    err = None
+    for family, socktype, proto, _, sockaddr in infos:
+        try:
+            return socket.create_connection(sockaddr[:2], timeout, source_address)
+        except OSError as e:
+            err = e
+    raise err or OSError(f"could not connect to {host}:{port}")
+
+
+class _GuardedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self._create_connection = _guarded_create_connection   # __init__ sets the default per instance
+
+
+class _GuardedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self._create_connection = _guarded_create_connection   # TLS still verifies the hostname
+
+
+class _GuardedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_GuardedHTTPConnection, req)
+
+
+class _GuardedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_GuardedHTTPSConnection, req, context=self._context)
+
+
+# Every LLM request (and any redirect it follows) connects through the guard.
+_OPENER = urllib.request.build_opener(_GuardedHTTPHandler(), _GuardedHTTPSHandler(context=_SSL_CTX))
+
+
 def _http_post_json(url, payload, headers, timeout, retries=2, backoff=0.5):
     """POST JSON and parse the JSON response, retrying transient failures (network
     errors, timeouts, HTTP 5xx) with exponential backoff. HTTP 4xx is NOT retried —
@@ -31,7 +91,7 @@ def _http_post_json(url, payload, headers, timeout, retries=2, backoff=0.5):
     for attempt in range(retries + 1):
         try:
             req = urllib.request.Request(url, data=data, headers=headers)
-            with urllib.request.urlopen(req, timeout=timeout, context=_SSL_CTX) as resp:
+            with _OPENER.open(req, timeout=timeout) as resp:
                 return json.load(resp)
         except urllib.error.HTTPError as e:
             detail = e.read().decode(errors="replace")[:300]

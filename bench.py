@@ -1,22 +1,31 @@
 """Deterministic benchmark across all kernels (single + multi-statement).
 
 One strong, legal schedule per kernel; reports baseline + measured speedup
-(clang -O3 + OpenMP) and the geometric mean. No LLM. Run: python3 bench.py
+(clang -O3 + OpenMP) and the geometric mean. No LLM.
 
-Each speedup is env.confirm(interleaved=True): the median ratio of CONFIRM_ROUNDS
+    python3 bench.py                         # PolyBench LARGE datasets (minutes)
+    python3 bench.py --size MEDIUM --rounds 3
+    python3 bench.py --kernels gemm,2mm
+
+Each speedup is env.confirm(interleaved=True): the median ratio of `--rounds`
 alternating baseline/candidate runs, not one run (single parallel runs vary 2-3x).
+The default is PolyBench's LARGE datasets: at DEFAULT/MEDIUM sizes most nests fit
+in cache, so locality transforms (tiling) can't show up in the numbers.
 """
+import argparse
 import math
+import os
 
 from compilot.backend_isl import environment
-from compilot.kernels import MULTI_REGISTRY
+from compilot.kernels import SIZE_NAMES, sized_kernel
 from compilot.multikernel import MultiEnvironment
+from compilot.runner import CONFIRM_ROUNDS, busy_warning
 
 # single-statement schedules
 SINGLE = {
-    "gemm":  "reorder(i, k, j)\nparallel(i)",   # at N=512 the nest is cache-resident: 512-way rows beat 8 tiles
-    "syrk":  "tile2d(i, j, 64, 64)\nparallel(i_t)",
-    "syr2k": "tile2d(i, j, 64, 64)\nparallel(i_t)",
+    "gemm":  "tile3d(i, j, k, 32, 128, 64)\nreorder(i_t, j_t, k_t, i, k, j)\nparallel(i_t)",
+    "syrk":  "tile2d(i, j, 32, 32)\nparallel(i_t)",
+    "syr2k": "tile2d(i, j, 32, 32)\nparallel(i_t)",
     "syrk_tri":  "tile2d(i, j, 32, 32)\nparallel(i_t)",
     "syr2k_tri": "tile2d(i, j, 32, 32)\nparallel(i_t)",
     "floydwarshall": "tile2d(i, j, 64, 64)",
@@ -35,22 +44,47 @@ MULTI = {
 }
 
 
+def args_parser(doc):
+    ap = argparse.ArgumentParser(description=doc.splitlines()[0])
+    ap.add_argument("--size", default="LARGE", choices=SIZE_NAMES,
+                    help="PolyBench dataset class (default LARGE) or DEFAULT (built-in sizes)")
+    ap.add_argument("--rounds", type=int, default=CONFIRM_ROUNDS,
+                    help="alternating baseline/candidate run pairs per kernel")
+    ap.add_argument("--kernels", default="", help="comma-separated subset (default: all)")
+    return ap
+
+
+def header(args):
+    threads = os.environ.get("OMP_NUM_THREADS", f"default ({os.cpu_count()} CPUs)")
+    print(f"size={args.size}  rounds={args.rounds}  OMP threads={threads}")
+    if (warn := busy_warning()):
+        print(f"warning: {warn}")
+    print()
+
+
+def selected(args, names):
+    want = [k.strip() for k in args.kernels.split(",") if k.strip()]
+    return [n for n in names if not want or n in want]
+
+
 def main():
+    args = args_parser(__doc__).parse_args()
+    header(args)
     print(f"{'kernel':16}{'baseline(s)':>12}{'speedup':>10}   type")
     print("-" * 60)
     speeds = []
-    for name in SINGLE:
-        env = environment(name)
-        sp = env.confirm(SINGLE[name], interleaved=True)
+    for name in selected(args, SINGLE):
+        env = environment(name, args.size)
+        sp = env.confirm(SINGLE[name], rounds=args.rounds, interleaved=True)
         if sp:
             speeds.append(sp)
-            print(f"{name:16}{env.baseline()['time']:12.4f}{sp:9.2f}x   single")
-    for name in MULTI:
-        env = MultiEnvironment(MULTI_REGISTRY[name]())
-        sp = env.confirm(MULTI[name], interleaved=True)
+            print(f"{name:16}{env.baseline()['time']:12.4f}{sp:9.2f}x   single", flush=True)
+    for name in selected(args, MULTI):
+        env = MultiEnvironment(sized_kernel(name, args.size))
+        sp = env.confirm(MULTI[name], rounds=args.rounds, interleaved=True)
         if sp:
             speeds.append(sp)
-            print(f"{name:16}{env.baseline()['time']:12.4f}{sp:9.2f}x   multi")
+            print(f"{name:16}{env.baseline()['time']:12.4f}{sp:9.2f}x   multi", flush=True)
     gm = math.exp(sum(math.log(x) for x in speeds) / len(speeds))
     print("-" * 60)
     print(f"{'GEOMEAN':16}{'':12}{gm:9.2f}x   ({len(speeds)} kernels)")

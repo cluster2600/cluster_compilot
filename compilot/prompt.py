@@ -22,6 +22,9 @@ their legality and reports the measured speedup. You iterate using that feedback
   unroll(L, F)                   unroll loop L by factor F
   skew(Ltarget, Lsrc, factor)    skew Ltarget by factor*Lsrc
   reverse(L)                     reverse loop L's iteration order
+  shift(L, c)                    offset loop L by integer c (aligns statements for fusion)
+  fuse(L)                        multi-statement kernels only: run this statement inside the
+                                 PREVIOUS statement's loops down to and including L
 
 Loop labels are the loop variable names shown in the nest. Tiling loop L creates
 a tile loop named L_t that you may then reorder/parallelize. Tile loops are placed
@@ -56,7 +59,7 @@ tiling) and thread-level parallelism on the outermost legal loop.
 
 
 def kernel_message(env):
-    nest = codegen.render_nest(env.ek)
+    nest = env.render() if hasattr(env, "render") else codegen.render_nest(env.ek)
     t0 = env.baseline()["time"]
     return f"""Here is the loop nest to optimize:
 
@@ -113,6 +116,15 @@ def moa_aggregator_hint_multi(ref_sets, n):
             f"(yours and theirs) is compiled and measured in parallel.")
 
 
+_FUSION_HINT = (
+    "To fuse, put fuse(L) in a statement's block: it then runs inside the previous "
+    "statement's loops down to L (loops matched by position), right after that "
+    "statement's body — e.g. fuse(i) shares the outer loop. Fusion is checked against "
+    "every dependence between the statements; when a statement reads a neighbour the "
+    "previous one hasn't produced yet, shift(L, 1) delays it by one iteration so the "
+    "fusion becomes legal (e.g. jacobi: shift(i, 1) then fuse(i)).\n")
+
+
 def kernel_message_multi(menv):
     from .multikernel import _Kernelish
     stmts = menv.mk.statements
@@ -122,11 +134,11 @@ def kernel_message_multi(menv):
                  f"SEQUENTIAL time loop. The time loop carries dependences and CANNOT be "
                  f"parallelized — schedule only the spatial loops shown (tile / reorder / "
                  f"parallelize them). Provide exactly {n} <schedule> block(s), one per "
-                 f"statement, IN ORDER.\n")
+                 f"statement, IN ORDER.\n" + _FUSION_HINT)
     else:
         intro = (f"This kernel has {n} statements, run in sequence (a later statement may read an "
                  f"earlier one's output buffer). Provide exactly {n} <schedule> blocks, one per "
-                 f"statement, IN ORDER.\n")
+                 f"statement, IN ORDER.\n" + _FUSION_HINT)
     parts = [intro]
     for idx, s in enumerate(stmts):
         nest = codegen.render_nest(_Kernelish(s.loops, s.body))

@@ -33,6 +33,37 @@ _RUN_LOCK = threading.Lock()
 
 CONFIRM_ROUNDS = 5   # baseline/candidate run pairs per ab_speedup
 
+# Opt-in thread placement for timed runs (COMPILOT_OMP_BIND=1), applied only where
+# the user hasn't set these. Pinning is the textbook way to stop threads migrating
+# mid-run, but on a 16-thread WSL2 host it did NOT reduce run-to-run spread (20+20
+# alternating GEMM runs: max/min 3.97x pinned vs 2.85x unpinned, medians within
+# 15%), so it is off by default. Try it on bare-metal Linux.
+OMP_DEFAULTS = {"OMP_PROC_BIND": "close", "OMP_PLACES": "cores"}
+
+
+def omp_env(base=None):
+    """The environment a timed binary runs with (see OMP_DEFAULTS)."""
+    env = dict(os.environ if base is None else base)
+    if env.get("COMPILOT_OMP_BIND", "0") == "1":
+        for k, v in OMP_DEFAULTS.items():
+            env.setdefault(k, v)
+    return env
+
+
+def busy_warning(threshold=0.5):
+    """A warning string if the machine is busy enough to distort timings (1-minute
+    load average above `threshold` x CPU count), else None. Parallel speedups suffer
+    most: a loaded host both slows them and makes them noisier."""
+    try:
+        load = os.getloadavg()[0]
+    except OSError:                       # not available on this platform
+        return None
+    cpus = os.cpu_count() or 1
+    if load > threshold * cpus:
+        return (f"machine is busy (load average {load:.1f} on {cpus} CPUs): timings will be "
+                f"noisy and parallel speedups understated")
+    return None
+
 
 def _libomp_prefix():
     global _OMP
@@ -70,7 +101,7 @@ def _compile(c_code, d, timeout):
 def _run(binp, threads, timeout):
     """Run a compiled kernel once (serialized by _RUN_LOCK). Return the result dict."""
     omp = _libomp_prefix()
-    env = dict(os.environ)
+    env = omp_env()
     if omp:
         env["DYLD_LIBRARY_PATH"] = f"{omp}/lib:" + env.get("DYLD_LIBRARY_PATH", "")
     if threads:
@@ -93,7 +124,9 @@ def _run(binp, threads, timeout):
     if secs <= 0:
         return {"ok": False, "error": "measurement",
                 "detail": f"measured time {secs}s too small to trust; use a larger size class"}
-    return {"ok": True, "time": secs, "checksum": float(c.group(1))}
+    th = re.search(r"THREADS\s+(\d+)", rp.stdout)
+    return {"ok": True, "time": secs, "checksum": float(c.group(1)),
+            "threads": int(th.group(1)) if th else None}
 
 
 def compile_and_run(c_code, threads=None, timeout=120):

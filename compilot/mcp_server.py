@@ -42,7 +42,7 @@ TOOLS = [
                        "legal, compile + run it for a real wall-clock speedup (one noisy run). "
                        "Single-statement and imperfect-nest kernels (gemm, syrk, lu, ...); no LLM. "
                        "The first call per kernel+size also compiles and times the baseline "
-                       "(seconds at LARGE); later calls reuse it. schedule is the transform DSL, "
+                       "(seconds at DEFAULT, minutes at PolyBench LARGE); later calls reuse it. schedule is the transform DSL, "
                        "e.g. 'reorder(i, k, j)\\ntile2d(i, j, 32, 32)\\nparallel(i_t)'.",
         "inputSchema": {
             "type": "object",
@@ -50,8 +50,9 @@ TOOLS = [
                 "kernel": {"type": "string", "description": "single-statement kernel name"},
                 "schedule": {"type": "string", "description": "transform DSL, one transform per line"},
                 "size": {"type": "string",
-                         "enum": ["MINI", "SMALL", "MEDIUM", "LARGE", "EXTRALARGE"],
-                         "default": "LARGE", "description": "PolyBench dataset size class"},
+                         "enum": ["DEFAULT", "MINI", "SMALL", "MEDIUM", "LARGE", "EXTRALARGE"],
+                         "default": "DEFAULT",
+                         "description": "DEFAULT (the repo's built-in size) or a PolyBench/C 4.2.1 dataset"},
             },
             "required": ["kernel", "schedule"],
         },
@@ -77,8 +78,9 @@ TOOLS = [
                 "aggregator": {"type": "string", "default": ""},
                 "base_url": {"type": "string", "default": "http://localhost:11434/v1"},
                 "size": {"type": "string",
-                         "enum": ["MINI", "SMALL", "MEDIUM", "LARGE", "EXTRALARGE"],
-                         "default": "LARGE", "description": "PolyBench dataset size class (×5 instances)"},
+                         "enum": ["DEFAULT", "MINI", "SMALL", "MEDIUM", "LARGE", "EXTRALARGE"],
+                         "default": "DEFAULT",
+                         "description": "DEFAULT (the repo's built-in size) or a PolyBench/C 4.2.1 dataset"},
             },
             "required": ["kernel"],
         },
@@ -97,9 +99,10 @@ def _check_base_url(base_url):
     legitimate LLM does). The host is RESOLVED and every address checked, so numeric
     spellings (2852039166, 0xa9fea9fe) and names pointing there are refused too.
     Loopback/LAN stays allowed — that's the normal Ollama case.
-    ponytail: a DNS answer that changes between this check and the request
-    (rebinding) is not covered; nor is a host that doesn't resolve yet (same
-    class — the later request resolves it), which is let through.
+    This is the early, readable rejection. The request itself goes through
+    llm._guarded_create_connection, which re-resolves, refuses link-local and
+    connects to the addresses it checked — that closes DNS rebinding, redirects,
+    and hosts that don't resolve yet (let through here).
     """
     import ipaddress
     import socket
@@ -156,7 +159,7 @@ def _env(kernel, size):
     return environment(kernel, size)
 
 
-def _check_legality(kernel, schedule, size="LARGE"):
+def _check_legality(kernel, schedule, size="DEFAULT"):
     from .kernels import REGISTRY, IMPERFECT_REGISTRY
     # imperfect-nest solvers take a single shared schedule, so check_legality fits them too
     if kernel not in REGISTRY and kernel not in IMPERFECT_REGISTRY:
@@ -165,12 +168,16 @@ def _check_legality(kernel, schedule, size="LARGE"):
                          f"{sorted(IMPERFECT_REGISTRY)} kernels; use optimize for the rest."}
     if len(schedule) > MAX_SCHEDULE_CHARS:
         return {"error": f"schedule is {len(schedule)} characters; the limit is {MAX_SCHEDULE_CHARS}"}
+    from .runner import busy_warning
     r = _env(kernel, size).evaluate(schedule)
-    return {"status": r.status, "speedup": r.speedup, "detail": r.detail}
+    out = {"status": r.status, "speedup": r.speedup, "detail": r.detail}
+    if r.speedup is not None and (warn := busy_warning()):
+        out["warning"] = warn
+    return out
 
 
 def _optimize(kernel, backend="mock", model="gemini-2.5-flash", iters=8, candidates=3,
-              moa="", aggregator="", base_url="http://localhost:11434/v1", size="LARGE"):
+              moa="", aggregator="", base_url="http://localhost:11434/v1", size="DEFAULT"):
     from .agent import (run_dialogue, run_dialogue_multi, run_dialogue_moa,
                         run_dialogue_moa_multi)
     from .backend_isl import environment
@@ -207,13 +214,13 @@ def _call_tool(name, args):
     if name == "list_kernels":
         return _list_kernels()
     if name == "check_legality":
-        return _check_legality(args["kernel"], args["schedule"], args.get("size", "LARGE"))
+        return _check_legality(args["kernel"], args["schedule"], args.get("size", "DEFAULT"))
     if name == "optimize":
         return _optimize(
             args["kernel"], args.get("backend", "mock"), args.get("model", "gemini-2.5-flash"),
             int(args.get("iters", 8)), int(args.get("candidates", 3)),
             args.get("moa", ""), args.get("aggregator", ""),
-            args.get("base_url", "http://localhost:11434/v1"), args.get("size", "LARGE"))
+            args.get("base_url", "http://localhost:11434/v1"), args.get("size", "DEFAULT"))
     raise ValueError(f"unknown tool {name!r}")
 
 

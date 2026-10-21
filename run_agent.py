@@ -16,7 +16,8 @@ from compilot.backend_isl import environment
 from compilot.agent import (run_dialogue, run_dialogue_multi, best_of_k,
                             run_dialogue_moa, run_dialogue_moa_multi)
 from compilot.llm import GeminiClient, OpenAIClient, MockClient
-from compilot.kernels import MULTI_REGISTRY, STENCIL_REGISTRY
+from compilot.kernels import MULTI_REGISTRY, STENCIL_REGISTRY, SIZE_NAMES, sized_kernel
+from compilot.runner import busy_warning
 from compilot.multikernel import MultiEnvironment
 from compilot.stencil import StencilEnvironment
 
@@ -38,6 +39,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mock", action="store_true")
     ap.add_argument("--kernel", default="gemm")
+    ap.add_argument("--size", default="DEFAULT", choices=SIZE_NAMES,
+                    help="DEFAULT (built-in size) or a PolyBench/C 4.2.1 dataset class")
     ap.add_argument("--iters", type=int, default=20)
     ap.add_argument("--k", type=int, default=1)
     ap.add_argument("--candidates", type=int, default=3,
@@ -57,15 +60,17 @@ def main():
     gil = getattr(sys, "_is_gil_enabled", lambda: True)()
     runtime = f"py{sys.version_info.major}.{sys.version_info.minor} {'GIL' if gil else 'free-threaded'}"
 
+    if (warn := busy_warning()):
+        print(f"warning: {warn}\n")
     base_spec = "mock" if args.mock else f"{args.backend}:{args.model}"
     make = lambda: make_client(base_spec, args.base_url)
 
     if args.kernel in MULTI_REGISTRY or args.kernel in STENCIL_REGISTRY:   # >1 statement
         if args.kernel in STENCIL_REGISTRY:
-            menv = StencilEnvironment(STENCIL_REGISTRY[args.kernel]())
+            menv = StencilEnvironment(sized_kernel(args.kernel, args.size))
             kind = "stencil"
         else:
-            menv = MultiEnvironment(MULTI_REGISTRY[args.kernel]())
+            menv = MultiEnvironment(sized_kernel(args.kernel, args.size))
             kind = "multi-statement"
         print(f"kernel={args.kernel} ({kind}, {len(menv.mk.statements)} stmts)  "
               f"baseline={menv.baseline()['time']:.4f}s  driver={'mock' if args.mock else args.model}\n")
@@ -83,7 +88,7 @@ def main():
             print(f"  [stmt {i}] {s.strip() or '(identity)'}")
         return
 
-    env = environment(args.kernel)
+    env = environment(args.kernel, args.size)
     print(f"kernel={args.kernel}  baseline={env.baseline()['time']:.4f}s  "
           f"driver={'mock' if args.mock else args.model}  K={args.k} iters={args.iters} "
           f"candidates={args.candidates}  [{runtime}]\n")

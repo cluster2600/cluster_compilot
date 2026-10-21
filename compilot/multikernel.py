@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from . import codegen as _cg
 from . import schedule as _schedule
 from . import runner as _runner
+from . import union as _union
 from .backend_isl import SCHEDULE_ERRORS
 from .polyhedral import ISL_LOCK, PolyKernel, dependences, is_legal, is_parallel
 from .scheduler import build_theta
@@ -46,9 +47,11 @@ class MultiKernel:
     final: str                  # output array used for the checksum
 
 
-def _emit_program(mk, nests):
+def _emit_program(mk, nests, fused=None):
     """Generate one C program running every statement in order, timed. nests[i] is
-    statement i's scheduled C nest (codegen.isl_nest), or None for its original nest."""
+    statement i's scheduled C nest (codegen.isl_nest), or None for its original nest.
+    With `fused` (a union.fused_nest covering every statement), every statement's
+    output reset is hoisted ahead of it — MultiEnvironment.program checks that's safe."""
     outputs = set()
     for s in mk.statements:
         outputs.add(s.output)
@@ -72,7 +75,10 @@ def _emit_program(mk, nests):
             for outp in [s.output, *s.extra_outputs]:
                 rhs = ("(double)((f_*13+7)%97)/97.0" if s.reset == "reinit" else "0.0")
                 body_lines.append(f"    for (long f_=0;f_<(long)({tot(outp)});f_++) {outp}[f_]={rhs};")
-        body_lines.append(nest if nest is not None else _cg.original_nest(s.loops, s.body))
+        if fused is None:
+            body_lines.append(nest if nest is not None else _cg.original_nest(s.loops, s.body))
+    if fused is not None:
+        body_lines.append(fused)
 
     nest = "\n".join(body_lines)
     # position-weighted via a globally-incrementing weight w_ across all outputs, so a
@@ -104,6 +110,7 @@ int main(void){{
   }}
 {checksum}
   printf("TIME %.9f\\nCHECKSUM %.6e\\n", best, acc_);
+{_cg.THREADS}
 {frees}
   return 0;
 }}
@@ -123,9 +130,26 @@ class MultiEnvironment:
             self.deps = [dependences(s.poly) for s in mk.statements]
         self._baseline = None
         self._baseline_lock = threading.Lock()
+        self._union = {}                  # union dependences, built on first fuse()
 
     def baseline_program(self):
         return _emit_program(self.mk, [None] * len(self.mk.statements))
+
+    def _fused(self, scheds):
+        """The fuse()/shift() path: the whole sequence as one union. Caller holds ISL_LOCK."""
+        stmts = self.mk.statements
+        for t, s in enumerate(stmts):              # resets get hoisted ahead of the fused nest
+            if s.reset == "none":
+                continue
+            outs = {s.output, *s.extra_outputs}
+            for u in stmts[:t]:
+                if outs & {a for a, _ in u.poly.reads + u.poly.writes}:
+                    return None, {"status": "invalid", "speedup": None,
+                                  "detail": f"cannot fuse: an earlier statement uses {sorted(outs)} "
+                                            f"before statement {t} resets it"}
+        nest, failed = _union.fused_nest([(s.poly, s.body) for s in stmts], scheds,
+                                         self.mk.sizes, self.mk.arrays, self._union)
+        return (None, failed) if failed else (_emit_program(self.mk, [None] * len(stmts), nest), None)
 
     def baseline(self):
         if self._baseline is None:
@@ -145,6 +169,8 @@ class MultiEnvironment:
         nests = []
         with ISL_LOCK:                    # see polyhedral.ISL_LOCK; MoA evaluates pools in parallel
             try:
+                if _union.wants_fusion(scheds):
+                    return self._fused(scheds)
                 for s, D, sched in zip(stmts, self.deps, scheds):
                     if not sched.strip():
                         nests.append(None)

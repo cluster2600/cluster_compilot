@@ -1,24 +1,37 @@
-"""PolyBench coverage extras: the ×5 size classes and the correlation kernel.
+"""PolyBench coverage extras: the ×5 dataset classes and the correlation kernel.
 
     python3 -m tests.test_polybench
 """
-from compilot.kernels import REGISTRY, MULTI_REGISTRY, SIZE_CLASSES, sized_kernel
+from compilot.kernels import (REGISTRY, MULTI_REGISTRY, STENCIL_REGISTRY, IMPERFECT_REGISTRY,
+                              POLYBENCH, POLYBENCH_DATASETS, SIZE_CLASSES, SIZE_NAMES, sized_kernel)
 from compilot.mcp_server import _optimize
 
 
-def test_size_classes_scale_bounds():
-    # every class scales every loop bound monotonically; LARGE == the registry default.
-    base = dict(REGISTRY["gemm"][0].sizes)
-    assert sized_kernel("gemm", "LARGE")[0].sizes == base
-    mini = sized_kernel("gemm", "MINI")[0].sizes
-    xl = sized_kernel("gemm", "EXTRALARGE")[0].sizes
-    for k in base:
-        assert mini[k] < base[k] < xl[k], (k, mini[k], base[k], xl[k])
-    # works for multi + stencil kernels too (mutates a fresh object, no shared state)
-    assert sized_kernel("covariance", "SMALL").sizes["N"] < sized_kernel("covariance", "LARGE").sizes["N"]
-    assert sized_kernel("jacobi2d", "MINI").sizes["TSTEPS"] >= 2
-    print(f"OK: size classes {sorted(SIZE_CLASSES)} scale gemm "
-          f"{mini['N']}<{base['N']}<{xl['N']}")
+def _sizes(name, size):
+    k = sized_kernel(name, size)
+    return k[0].sizes if isinstance(k, tuple) else k.sizes
+
+
+def test_size_classes_are_polybench_datasets():
+    # DEFAULT is the registry's own size; MINI..EXTRALARGE are PolyBench 4.2.1's tables
+    assert _sizes("gemm", "DEFAULT") == REGISTRY["gemm"][0].sizes
+    assert _sizes("gemm", "LARGE") == {"N": 1000, "M": 1100, "K": 1200}      # NI, NJ, NK
+    assert _sizes("fdtd2d", "MINI") == {"NX": 20, "NY": 30, "TSTEPS": 20}     # TMAX -> TSTEPS
+    names = [*REGISTRY, *MULTI_REGISTRY, *STENCIL_REGISTRY, *IMPERFECT_REGISTRY]
+    n = 0
+    for name in names:
+        for size in SIZE_NAMES:
+            got = _sizes(name, size)                 # every kernel builds at every class
+            if name in POLYBENCH and size != "DEFAULT":
+                pb, rename = POLYBENCH[name]
+                for ours, theirs in rename.items():
+                    assert got[ours] == POLYBENCH_DATASETS[pb][size][theirs], (name, size, ours)
+                n += 1
+    assert set(POLYBENCH) | {"distmatrix", "montecarlo"} == set(names), set(names) - set(POLYBENCH)
+    # the two non-PolyBench extras scale their DEFAULT sizes instead
+    base = _sizes("distmatrix", "DEFAULT")
+    assert _sizes("distmatrix", "MINI") == {k: max(2, round(v * SIZE_CLASSES["MINI"])) for k, v in base.items()}
+    print(f"OK: {n} kernel x class instances match PolyBench/C 4.2.1's dataset tables")
 
 
 def test_correlation_registered_and_runs():
@@ -42,7 +55,7 @@ def test_optimize_respects_size_class():
 
 
 if __name__ == "__main__":
-    test_size_classes_scale_bounds()
+    test_size_classes_are_polybench_datasets()
     test_correlation_registered_and_runs()
     test_optimize_respects_size_class()
     print("test_polybench: all checks passed")

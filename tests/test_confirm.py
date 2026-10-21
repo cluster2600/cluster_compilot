@@ -97,6 +97,26 @@ def test_one_confirm_per_turn():
     print("OK multi-candidate turn confirms only its top raw candidate")
 
 
+def test_measurement_reports_threads_and_busy_hosts():
+    import os
+    env = environment("gemm", "SMALL")
+    r = runner.compile_and_run(codegen.generate_c(env.ek, "parallel(i)", env.pk))
+    assert r["ok"] and r["threads"] and r["threads"] >= 1, r      # programs print THREADS
+    orig = os.getloadavg
+    try:
+        os.getloadavg = lambda: (1000.0, 0.0, 0.0)
+        assert "busy" in runner.busy_warning()
+        os.getloadavg = lambda: (0.0, 0.0, 0.0)
+        assert runner.busy_warning() is None
+    finally:
+        os.getloadavg = orig
+    # thread pinning is opt-in and never overrides the user's own OpenMP settings
+    assert "OMP_PROC_BIND" not in runner.omp_env({})
+    assert runner.omp_env({"COMPILOT_OMP_BIND": "1"})["OMP_PLACES"] == "cores"
+    assert runner.omp_env({"COMPILOT_OMP_BIND": "1", "OMP_PROC_BIND": "spread"})["OMP_PROC_BIND"] == "spread"
+    print(f"OK runs report threads ({r['threads']}); busy-host warning; pinning opt-in")
+
+
 _TESTS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
 
 if __name__ == "__main__":

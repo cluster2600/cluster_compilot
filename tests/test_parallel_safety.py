@@ -27,7 +27,9 @@ SCHEDULES = [
 
 
 def main():
-    env = environment("gemm")
+    # SMALL: the verdicts (not the timings) are what's checked, so tiny nests keep
+    # the 384 compile+runs fast (at DEFAULT size this took 4-7 minutes)
+    env = environment("gemm", "SMALL")
     env.baseline()                                        # pre-warm before fan-out
 
     serial = {s: env._evaluate(s).status for s in SCHEDULES}    # uncached reference

@@ -38,8 +38,9 @@ SCHEDULE_ERRORS = (ValueError, IndexError, KeyError, isl.Error)
 CACHE_MAX = 256
 
 
-def environment(name, size="LARGE"):
-    """Build an Environment for a registered kernel name at a size class.
+def environment(name, size="DEFAULT"):
+    """Build an Environment for a registered kernel name at a size class
+    (kernels.SIZE_NAMES: DEFAULT, or a PolyBench dataset MINI..EXTRALARGE).
 
     Imperfect-nest kernels (solvers) get an ImperfectEnvironment, which exposes the
     same .pk/.baseline()/.evaluate() interface, so the single-statement agent

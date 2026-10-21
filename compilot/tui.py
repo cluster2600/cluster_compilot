@@ -198,9 +198,9 @@ def run():
                                               "reference specs, e.g. 'gemini:gemini-2.5-flash,local:qwen2.5-coder:32b'")
     ap.add_argument("--aggregator", default="", help="MoA aggregator spec (default: backend:model)")
     ap.add_argument("--base-url", default="http://localhost:11434/v1")
-    ap.add_argument("--size", default="LARGE",
-                    choices=["MINI", "SMALL", "MEDIUM", "LARGE", "EXTRALARGE"],
-                    help="PolyBench dataset size class")
+    ap.add_argument("--size", default="DEFAULT",
+                    choices=["DEFAULT", "MINI", "SMALL", "MEDIUM", "LARGE", "EXTRALARGE"],
+                    help="DEFAULT (built-in size) or a PolyBench/C 4.2.1 dataset class")
     args = ap.parse_args()
 
     from .kernels import REGISTRY, MULTI_REGISTRY, STENCIL_REGISTRY, IMPERFECT_REGISTRY

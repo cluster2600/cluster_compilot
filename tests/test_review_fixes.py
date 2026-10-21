@@ -151,6 +151,54 @@ def test_mcp_base_url_rejects_ssrf():                    # cso hardening
     print("OK MCP base_url rejects non-http(s) and link-local/metadata (cso)")
 
 
+def test_llm_requests_never_connect_link_local():          # DNS rebinding / redirects
+    """mcp_server._check_base_url vets the URL once; the request itself connects
+    through llm._guarded_create_connection, which resolves once, refuses link-local
+    addresses and connects to exactly what it checked — so a rebinding DNS answer or
+    a 302 to the metadata endpoint can't get through."""
+    import http.server
+    import threading
+    from compilot import llm
+    for addr in ("169.254.169.254", "2852039166", "::ffff:169.254.169.254", "fe80::1"):
+        try:
+            llm._guarded_create_connection((addr, 80), 1)
+        except llm.LinkLocalRefused:
+            continue
+        raise AssertionError(f"{addr} should be refused before connecting")
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            if self.path == "/redirect":
+                self.send_response(302)
+                self.send_header("Location", "http://169.254.169.254/latest/meta-data")
+                self.end_headers()
+                return
+            body = b'{"ok": true}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    hdr = {"Content-Type": "application/json"}
+    try:
+        assert llm._http_post_json(base + "/v1", {}, hdr, timeout=5) == {"ok": True}
+        try:
+            llm._http_post_json(base + "/redirect", {}, hdr, timeout=5, retries=0)
+            raise AssertionError("redirect to the metadata endpoint was followed")
+        except llm.LinkLocalRefused:
+            pass
+    finally:
+        srv.shutdown()
+    print("OK LLM requests refuse link-local peers at connect time (rebinding, redirects)")
+
+
 _TESTS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
 
 if __name__ == "__main__":

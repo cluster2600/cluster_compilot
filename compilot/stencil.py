@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from . import codegen as _cg
 from . import schedule as _schedule
 from . import runner as _runner
+from . import union as _union
 from .backend_isl import SCHEDULE_ERRORS
 from .polyhedral import ISL_LOCK, PolyKernel, dependences, is_legal, is_parallel
 from .scheduler import build_theta
@@ -42,9 +43,9 @@ class StencilKernel:
     tsteps: str = "TSTEPS"
 
 
-def _emit(sk, nests):
+def _emit(sk, nests, fused=None):
     """nests[i]: statement i's scheduled C nest (codegen.isl_nest), or None for its
-    original nest."""
+    original nest; `fused` (a union.fused_nest over all statements) replaces them."""
     # rank-agnostic: arrays of any rank flatten via the product of their dims, so
     # the same emitter handles 1-D (jacobi-1d), 2-D (jacobi/seidel) and 3-D
     # (heat-3d). Spatial bodies already carry explicit flat indexing.
@@ -59,8 +60,8 @@ def _emit(sk, nests):
     resets = "\n".join(
         f"    for (long f_=0;f_<(long)({tot(a)});f_++) {a}[f_]={pat if mode == 'reinit' else '0.0'};"
         for a, mode in sk.reset.items())
-    spatial = []
-    for s, nest in zip(sk.statements, nests):
+    spatial = [fused] if fused is not None else []
+    for s, nest in zip(sk.statements, nests if fused is None else []):
         spatial.append(nest if nest is not None else _cg.original_nest(s.loops, s.body, indent="      "))
     spatial = "\n".join(spatial)
     return f"""#include <stdio.h>
@@ -88,6 +89,7 @@ int main(void){{
   }}
   double sum=0; for(long f_=0;f_<(long)({tot(sk.final)});f_++) sum+=(double)(f_+1)*{sk.final}[f_];  // position-weighted: catches transposed/mirrored writes
   printf("TIME %.9f\\nCHECKSUM %.6e\\n", best, sum);
+{_cg.THREADS}
   return 0;
 }}
 """
@@ -101,6 +103,7 @@ class StencilEnvironment:
             self.deps = [dependences(s.poly) for s in sk.statements]
         self._baseline = None
         self._baseline_lock = threading.Lock()
+        self._union = {}                  # union dependences (within one time step), on first fuse()
 
     def baseline_program(self):
         return _emit(self.sk, [None] * len(self.sk.statements))
@@ -123,6 +126,11 @@ class StencilEnvironment:
         nests = []
         with ISL_LOCK:                    # see polyhedral.ISL_LOCK
             try:
+                if _union.wants_fusion(scheds):   # one time step's statements as one union
+                    nest, failed = _union.fused_nest([(s.poly, s.body) for s in stmts], scheds,
+                                                     self.sk.sizes, self.sk.arrays, self._union,
+                                                     indent="      ")
+                    return (None, failed) if failed else (_emit(self.sk, [None] * len(stmts), nest), None)
                 for s, D, sched in zip(stmts, self.deps, scheds):
                     if not sched.strip():
                         nests.append(None)
