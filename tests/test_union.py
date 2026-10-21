@@ -35,6 +35,10 @@ def test_fusion_legality_and_execution():
         (_multi, "2mm", ["", "fuse(i)"], "success"),                 # D row i needs tmp row i only
         (_multi, "2mm", ["reorder(i,k,j)\nparallel(i)", "reorder(i,l,j)\nfuse(i)"], "success"),
         (_multi, "2mm", ["", "fuse(j)"], "illegal"),                 # D[i][j] needs all of tmp row i
+        # parallel on a loop deeper than the original nest (tiling added a dim); innermost,
+        # so a fork/join per (i, j_t, k): MINI keeps that correctness check quick
+        (lambda n, s: _multi(n, s, "MINI"), "2mm",
+         ["tile(j, 8)\nreorder(i, j_t, k, j)\nparallel(j)", "fuse(i)"], "success"),
         (_multi, "3mm", ["", "", "fuse(i)"], "illegal"),            # G needs all of F
         (_multi, "atax", ["", "fuse(i)"], "success"),
         (_stencil, "jacobi1d", ["", "fuse(i)"], "illegal"),         # A[i] = f(B[i+1]) too early

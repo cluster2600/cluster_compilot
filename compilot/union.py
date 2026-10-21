@@ -87,10 +87,15 @@ def betas(time, p):
     return tuple(str(b).strip() for b in time[0:2 * p + 1:2])
 
 
+def n_loops(time):
+    """Number of loop dims in a 2d+1 vector [b0, e0, ..., bn] — after any tiling,
+    which can make it deeper than the statement's original nest."""
+    return (len(time) - 1) // 2
+
+
 def loop_members(prog, times, p, key):
     """Indices of the statements inside the depth-p loop identified by betas `key`."""
-    return [k for k, (s, t) in enumerate(zip(prog.stmts, times))
-            if len(s.labels) > p and betas(t, p) == key]
+    return [k for k, t in enumerate(times) if n_loops(t) > p and betas(t, p) == key]
 
 
 def loop_is_parallel(prog, D, theta, times, p, key):
@@ -163,8 +168,8 @@ def to_c(prog, theta, times, context, pragmas=None, indent="    "):
     def decls_at(names, depth):
         seen, out = set(), []
         for n in names:
-            s, _ = by_name[n]
-            if len(s.labels) - 1 == depth:
+            s, t = by_name[n]
+            if n_loops(t) - 1 == depth:
                 for ctype, var in s.decls:
                     if var not in seen:
                         seen.add(var)
