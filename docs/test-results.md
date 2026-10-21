@@ -2,7 +2,7 @@
 
 All suites pass and the benchmark is reproducible. Captured on a multi-core macOS / Apple-Silicon machine — **speedups are machine-dependent; legality verdicts are not.** Regenerate everything with the commands shown.
 
-> **Measurement note.** The numbers in the tables below were captured before two fixes: `tile2d`/`tile3d` used to strip-mine each loop in place (no real blocking), and every speedup was a single timed run. Bests and benchmark numbers are now re-measured (see [Re-measured on Linux](#re-measured-on-linux)); re-run `python3 bench.py` on your machine for current figures.
+> **Measurement note.** The numbers in the tables below were captured before two fixes: `tile2d`/`tile3d` used to strip-mine each loop in place (no real blocking), and every speedup was a single timed run. Bests and benchmark numbers are now re-measured (see [Re-measured on Linux](#re-measured-on-linux) and, for the PolyBench datasets of 0.3.0, [PolyBench LARGE](#polybench-large-030)); re-run `python3 bench.py` on your machine for current figures.
 
 ## Test suite
 
@@ -69,6 +69,51 @@ GEOMEAN              1.62x      2.07x    1.27x   (gemm 7.49x, 2mm 4.03x)
 ```
 
 `atax`, `bicg` and `gesummv` run the *identical* schedule in both `baselines.py` columns, so their ratios (0.68–0.87×) are the residual noise floor on that host. With real tiling, GEMM at N=512 (cache-resident) is fastest with plain `reorder(i, k, j)` + `parallel(i)`: interleaved medians of 34× vs 17–24× for the 64-wide tiled variants, whose 8–16 tile rows leave cores idle.
+
+## PolyBench LARGE (0.3.0)
+
+Since 0.3.0 `python3 bench.py` runs PolyBench's own **LARGE** datasets (gemm 1000×1100×1200) by default, the regime where locality transforms show up; each number is the median ratio of 3 alternating baseline/candidate runs (`--rounds 3`). Same 16-thread WSL2 host, load average 3.8–6.4 during the run, so read these as indicative:
+
+```
+kernel           baseline(s)   speedup   type
+gemm                  2.8948    10.40x   single     tile3d(32,128,64) + reorder + parallel(i_t)
+syrk                  2.4111     2.67x   single
+syr2k                 2.5019     3.63x   single
+syrk_tri              1.3252     3.35x   single
+syr2k_tri             0.9638     3.56x   single
+floydwarshall              —         —   single: skipped (N=2800 runs exceed the 120 s timeout; use --timeout)
+2mm                   4.2033    11.73x   multi
+3mm                   4.9128     6.97x   multi
+mvt                   0.0429     3.07x   multi
+atax                  0.0086     0.97x   multi
+bicg                  0.0085     1.06x   multi
+gesummv               0.0039     0.95x   multi
+gemver                0.0455     2.13x   multi
+covariance           13.5872     2.26x   multi
+doitgen               1.5661     2.94x   multi
+GEOMEAN                          2.97x   (14 kernels)
+```
+
+`baselines.py --size LARGE --rounds 3` (load average 10.3 when it started — the host was busy):
+
+```
+kernel              naive   ComPilot    ratio
+gemm                4.53x     19.60x    4.33x
+syrk                3.15x      4.06x    1.29x
+syr2k               3.54x      4.34x    1.23x
+floydwarshall     skipped (a run failed or exceeded --timeout)
+2mm                 2.54x      7.21x    2.84x
+3mm                 2.15x      6.95x    3.23x
+mvt                 2.85x      2.01x    0.71x
+atax                1.28x      1.29x    1.01x
+bicg                1.88x      1.11x    0.59x
+gesummv             4.33x      8.60x    1.98x
+GEOMEAN             2.72x      4.23x    1.55x
+```
+
+mvt, atax, bicg and gesummv run the *same* schedule in both columns, so their ratios (0.59–1.98×) are the noise floor on a loaded host; the matmul family is where scheduling pays (gemm 4.3×, 2mm/3mm ~3× over naive parallelization).
+
+The tiling sweep that picked gemm's schedule (single run / median of 3 fresh runs, same host): untiled `reorder(i,k,j)`+`parallel(i)` 9.8× confirmed, `tile3d(32,128,64)` 12.8×, `tile3d(64,256,128)` 12.2×. The matvec kernels (atax/bicg/gesummv) are memory-bound at ~1×.
 
 ## Agent loop (live behaviour, mock driver shown)
 
