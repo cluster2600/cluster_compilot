@@ -112,6 +112,6 @@ MYK_POLY = PolyKernel(name="myk", order=["i","j","k"], domain="0<=i<N and ...",
 REGISTRY["myk"] = (MYK, MYK_POLY)
 ```
 
-The agent, `evaluate.py`, `bench.py`, and the legality engine all pick it up by name. Use `GEMM` / `GEMM_POLY` as the template. Multi-statement kernels use `compilot/polyhedral_multi.py`.
+The agent, `evaluate.py`, `bench.py`, and the legality engine all pick it up by name. Use `GEMM` / `GEMM_POLY` as the template. Multi-statement kernels are a `multikernel.MultiKernel` of `MStmt`s, each with its own `PolyKernel` (see `_gesummv` in `kernels.py`).
 
 The two specs must describe the same computation: scheduled code is generated from the `PolyKernel` (its domain and `order`, with `body` bound to those iterator names), while the baseline runs the `Kernel`'s loops. List **every** access to an array the statement writes in `reads`/`writes` — a missing one is a missing dependence, and the legality engine will then accept schedules that race. `python3 -m tests.test_codegen_isl` checks both properties for every registered kernel.

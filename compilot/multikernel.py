@@ -7,8 +7,8 @@ statement check per statement (the cross-statement order is preserved by running
 them in sequence). Codegen emits all nests into one timed program; the final
 output's checksum guards correctness.
 
-(Loop fusion across statements — running them in a shared nest — is the next
-step, on top of polyhedral_multi's fusion legality.)
+Loop fusion across statements (fuse / shift) runs them in a shared nest: the fused
+statements then become one union.UnionProgram, checked and generated as a whole.
 """
 import threading
 from dataclasses import dataclass, field

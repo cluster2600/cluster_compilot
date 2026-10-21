@@ -26,7 +26,7 @@ Single runs of a parallel kernel are noisy (the same schedule can measure 2–3�
 
 - **`backend_isl`** uses ISL directly (`islpy`) — the same library Tiramisu wraps.
 - **`backends/tiramisu.py`** drives the **real Tiramisu compiler** we built; the two agree **4/4** on directly-comparable transforms (see [test results](test-results.md)).
-- **`union.py`** models several statements at once (2d+1 schedules, accesses read from the C): exact legality for imperfect nests and for fused statement sequences, plus the ISL codegen for both. (`polyhedral_multi.py` is the earlier 2d+1 legality prototype `test_multistatement` exercises.)
+- **`union.py`** models several statements at once (2d+1 schedules, accesses read from the C): exact legality for imperfect nests and for fused statement sequences, plus the ISL codegen for both.
 
 ## The schedule DSL
 
