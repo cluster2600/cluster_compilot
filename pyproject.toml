@@ -4,11 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "compilot"
-version = "0.3.0"
+version = "0.3.1"
 description = "Agentic auto-scheduling: polyhedral legality (ISL) + LLM loop transforms"
 readme = "README.md"
 requires-python = ">=3.14"
 license = "MIT"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Software Development :: Compilers",
+]
 keywords = ["polyhedral", "compiler", "loop-optimization", "isl", "openmp", "mcp", "llm", "polybench"]
 dependencies = [
     "islpy>=2026.1,<2027",   # ISL polyhedral legality engine (same library Tiramisu wraps); bounded for reproducible builds
@@ -23,5 +31,5 @@ Repository = "https://github.com/cluster2600/cluster_compilot"
 compilot-mcp = "compilot.mcp_server:main"   # MCP server (Claude Code / Codex)
 compilot-tui = "compilot.tui:run"           # live TUI monitor
 
-[tool.setuptools]
-packages = ["compilot"]
+[tool.setuptools.packages.find]
+include = ["compilot", "compilot.*"]   # the subpackages too (compilot.backends)

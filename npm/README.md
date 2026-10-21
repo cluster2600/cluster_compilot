@@ -8,15 +8,16 @@ deps (`islpy`, `clang`) live in the Python environment.
 
 ## Prerequisites
 
-The Python package must be importable. Clone and install it once:
+The server is the Python package `compilot` (Python 3.14+), and it compiles the
+kernels it times with clang + OpenMP. Install both once:
 
 ```bash
-git clone https://github.com/cluster2600/cluster_compilot.git
-cd cluster_compilot
-python3.14 -m venv .venv && . .venv/bin/activate
-pip install -e .
-brew install libomp        # OpenMP for clang (macOS)
+python3 -m venv ~/.venvs/compilot && ~/.venvs/compilot/bin/pip install compilot
+brew install libomp                      # macOS: OpenMP for clang
+# sudo apt install clang libomp-dev      # Debian / Ubuntu
 ```
+
+(Working from a clone of the repo instead? `pip install -e .` in it does the same.)
 
 Then point the launcher at that interpreter via `COMPILOT_PYTHON` (otherwise it
 uses `python3` from `PATH`). It deliberately never picks up a `./.venv` or a
@@ -34,8 +35,8 @@ whatever project is open, and that project must not be able to swap in its own c
 ## Claude Code
 
 ```bash
-COMPILOT_PYTHON=/path/to/cluster_compilot/.venv/bin/python \
-  claude mcp add compilot -- npx -y @cluster2600/compilot-mcp
+claude mcp add compilot -e COMPILOT_PYTHON=$HOME/.venvs/compilot/bin/python \
+  -- npx -y @cluster2600/compilot-mcp
 ```
 
 ## Codex
@@ -46,7 +47,7 @@ COMPILOT_PYTHON=/path/to/cluster_compilot/.venv/bin/python \
 [mcp_servers.compilot]
 command = "npx"
 args = ["-y", "@cluster2600/compilot-mcp"]
-env = { COMPILOT_PYTHON = "/path/to/cluster_compilot/.venv/bin/python" }
+env = { COMPILOT_PYTHON = "/Users/you/.venvs/compilot/bin/python" }
 ```
 
 ## Try it

@@ -42,7 +42,7 @@ compilot-tui --kernel 2mm --moa "gemini:gemini-2.5-flash,local:qwen2.5-coder:32b
 Drive the optimizer in natural language from an MCP client. Installed as `compilot-mcp`; tools: `list_kernels`, `check_legality(kernel, schedule)` (ISL verdict + one measured speedup; the first call per kernel+size also times the baseline, later calls reuse it), `optimize(kernel, backend=mock, …)` (the full agent loop).
 
 ```bash
-COMPILOT_PYTHON=$PWD/.venv/bin/python claude mcp add compilot -- npx -y @cluster2600/compilot-mcp
+claude mcp add compilot -e COMPILOT_PYTHON=$PWD/.venv/bin/python -- npx -y @cluster2600/compilot-mcp
 ```
 
 See [`npm/README.md`](../npm/README.md) for the Codex `config.toml` form and details.
