@@ -1,15 +1,17 @@
 # Publish the Python package to PyPI and the MCP launcher to npm on every
 # published release, with no stored tokens: both registries trust this workflow
-# file through GitHub's OIDC token (a PyPI "trusted publisher" with environment
-# `pypi`, and npm "trusted publishing" for publish.yml). A version that is already
-# on a registry is skipped there, so re-running a release is safe. The container
-# image is published by docker-publish.yml from the same release event.
+# file through GitHub's OIDC token (a PyPI "trusted publisher" and npm "trusted
+# publishing", each tied to publish.yml AND its environment). Only the publish
+# jobs get id-token: write, each inside an environment (`pypi`, `npm`) whose
+# deployment policy admits only `v*` tags, and the tag must match both manifests.
+# No manual trigger: a failed release is re-run from the Actions tab (a re-run
+# keeps the release event). A version already on a registry is skipped there.
+# The container image is published by docker-publish.yml from the same event.
 name: publish
 
 on:
   release:
     types: [published]
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -28,9 +30,9 @@ jobs:
         run: |
           py=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
           js=$(python -c "import json; print(json.load(open('npm/package.json'))['version'])")
-          echo "pyproject=$py npm=$js tag=${TAG:-<manual run>}"
+          echo "pyproject=$py npm=$js tag=$TAG"
           test "$py" = "$js"
-          if [ -n "$TAG" ]; then test "v$py" = "$TAG"; fi
+          test "v$py" = "$TAG"
       - run: pip install build && python -m build
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
@@ -55,6 +57,7 @@ jobs:
   npm:
     needs: build
     runs-on: ubuntu-latest
+    environment: npm
     permissions:
       id-token: write
     defaults:
