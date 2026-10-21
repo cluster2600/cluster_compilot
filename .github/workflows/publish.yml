@@ -6,6 +6,7 @@
 # deployment policy admits only `v*` tags, and the tag must match both manifests.
 # No manual trigger: a failed release is re-run from the Actions tab (a re-run
 # keeps the release event). A version already on a registry is skipped there.
+# npm runs only after PyPI succeeded (its README points at the PyPI package).
 # The container image is published by docker-publish.yml from the same event.
 name: publish
 
@@ -55,7 +56,9 @@ jobs:
           skip-existing: true
 
   npm:
-    needs: build
+    # after PyPI: the npm README tells users to `pip install compilot`, so it
+    # must never go out before that name holds this release
+    needs: [build, pypi]
     runs-on: ubuntu-latest
     environment: npm
     permissions:
