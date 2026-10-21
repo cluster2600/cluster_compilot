@@ -26,7 +26,7 @@ Full docs live in [`docs/`](docs/):
 
 ## Quick start
 
-Requires **Python 3.14+** (`islpy 2026.1` ships `cp314` wheels; see [Parallelism](#parallelism-python-314) below for why).
+Requires **Python 3.14+**; CI runs the suite on 3.14 and 3.15 (islpy ships `cp314` and `cp315` wheels; see [Parallelism](#parallelism-python-314) below for why 3.14). To use only the MCP server or the library, `pip install compilot` (on PyPI from 0.3.1) and a clang with OpenMP are enough; the checkout below is for running the tests and benchmarks.
 
 ```bash
 git clone https://github.com/cluster2600/cluster_compilot.git
@@ -142,7 +142,7 @@ All suites pass; the benchmark is reproducible (`python3 bench.py`). Full output
 
 **Tiramisu backend — complete:** legality (ISL↔Tiramisu **4/4**) + Halide **codegen** (128 KB object) + **execution** (runs+times its own generated code via a Halide-buffer wrapper: tile2d+parallel → **1.7× measured by Tiramisu**).
 
-**Python 3.15:** forward-ready — `requires-python >=3.14` has no upper cap, and the suite is **deprecation-clean** (passes under `-W error::DeprecationWarning`, so nothing 3.15 removes is in use). The only blocker is upstream: `islpy` ships no `cp315` wheel yet (cp310–cp314 only), and a source build needs the ISL C library. Run `python3 check_py315.py` to probe PyPI for the wheel — when it flips to `READY`, `pip install -e .` should work on 3.15 unchanged. (Free-threaded `3.15t` additionally needs a `cp315t` wheel, same as the `3.14t` gap.)
+**Python 3.15:** supported — islpy 2026.2.2 ships `cp315` wheels, CI runs the whole suite on 3.14 and 3.15, and the suite is **deprecation-clean** on both (passes under `-W error::DeprecationWarning`). Free-threaded `3.15t` still needs a `cp315t` islpy wheel (the same gap as `3.14t`); `python3 check_py315.py` probes PyPI for it.
 
 **full PolyBench/C 4.2.1 — 30/30 kernels × 5 datasets = 150 instances:**
 - **30/30 kernels** across every PolyBench category — blas (gemm/gemver/gesummv/symm/syr2k/syrk/trmm), kernels (2mm/3mm/atax/bicg/doitgen/mvt), solvers (cholesky/durbin/gramschmidt/lu/ludcmp/trisolv), datamining (correlation/covariance), medley (deriche/floyd-warshall/nussinov), stencils (adi/fdtd-2d/heat-3d/jacobi-1d/jacobi-2d/seidel-2d) — wired into `optimize`/`check_legality` (and the TUI), each at PolyBench's **5 datasets** (`MINI/SMALL/MEDIUM/LARGE/EXTRALARGE`, pass `size=` / `--size`) — the exact per-kernel sizes from PolyBench 4.2.1's headers (gemm `LARGE` = 1000×1100×1200). `DEFAULT` (the default everywhere) is each kernel's built-in size, small enough for interactive search; 3mm/atax/bicg/fdtd-2d use PolyBench's rectangular shapes. The two non-PolyBench extras (distmatrix, montecarlo) scale their default sizes. **Every computational pattern works**: matmul, matvec, reduction, triangular, multi-statement, fusion, in-place, datamining, time-stepped stencils, 3-D, and the loop-carried solvers.
