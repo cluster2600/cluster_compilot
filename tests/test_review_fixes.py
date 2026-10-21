@@ -140,7 +140,9 @@ def test_mcp_base_url_rejects_ssrf():                    # cso hardening
     from compilot.mcp_server import _check_base_url
     for bad in ("ftp://x/v1", "file:///etc/passwd", "http://169.254.169.254/v1", "http://[fe80::1]/v1",
                 # numeric spellings of 169.254.169.254 that only resolution catches
-                "http://2852039166/v1", "http://0xa9fea9fe/v1", "http://[::ffff:169.254.169.254]/v1"):
+                "http://2852039166/v1", "http://0xa9fea9fe/v1", "http://[::ffff:169.254.169.254]/v1",
+                # metadata endpoints outside the link-local ranges (AWS IPv6, Alibaba)
+                "http://[fd00:ec2::254]/latest", "http://100.100.100.200/latest"):
         try:
             _check_base_url(bad)
         except ValueError:
@@ -149,6 +151,62 @@ def test_mcp_base_url_rejects_ssrf():                    # cso hardening
     for ok in ("http://localhost:11434/v1", "https://nim.example.com/v1"):
         assert _check_base_url(ok) == ok, ok
     print("OK MCP base_url rejects non-http(s) and link-local/metadata (cso)")
+
+
+def test_llm_requests_never_connect_link_local():          # DNS rebinding / redirects
+    """mcp_server._check_base_url vets the URL once; the request itself connects
+    through llm._guarded_create_connection, which resolves once, refuses link-local
+    addresses and connects to exactly what it checked — so a rebinding DNS answer or
+    a 302 to the metadata endpoint can't get through."""
+    import http.server
+    import threading
+    import urllib.request
+    from compilot import llm
+    for addr in ("169.254.169.254", "2852039166", "::ffff:169.254.169.254", "fe80::1",
+                 "fd00:ec2::254", "100.100.100.200"):
+        try:
+            llm._guarded_create_connection((addr, 80), 1)
+        except llm.LinkLocalRefused:
+            continue
+        raise AssertionError(f"{addr} should be refused before connecting")
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            if self.path == "/redirect":
+                self.send_response(302)
+                self.send_header("Location", "http://169.254.169.254/latest/meta-data")
+                self.end_headers()
+                return
+            body = b'{"ok": true}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    hdr = {"Content-Type": "application/json"}
+    try:
+        assert llm._http_post_json(base + "/v1", {}, hdr, timeout=5) == {"ok": True}
+        for direct in (False, True):
+            try:
+                llm._http_post_json(base + "/redirect", {}, hdr, timeout=5, retries=0, direct=direct)
+                raise AssertionError("redirect to the metadata endpoint was followed")
+            except llm.LinkLocalRefused:
+                pass
+        # caller-chosen endpoints never go through a proxy: the guard must see the real
+        # destination, not a proxy that would resolve and connect on our behalf
+        assert not any(isinstance(h, urllib.request.ProxyHandler) and h.proxies
+                       for h in llm._DIRECT_OPENER.handlers)
+        assert llm._http_post_json(base + "/v1", {}, hdr, timeout=5, direct=True) == {"ok": True}
+    finally:
+        srv.shutdown()
+    print("OK LLM requests refuse link-local peers at connect time (rebinding, redirects)")
 
 
 _TESTS = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

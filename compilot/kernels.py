@@ -187,17 +187,20 @@ def _poly(name, order, dom, w, r):
 
 
 def _3mm():
+    """E = A·B, F = C·D, G = E·F with PolyBench's rectangular NI..NM shapes."""
     from .multikernel import MStmt, MultiKernel
     S = 200
-    dom = "0<=i<N and 0<=j<N and 0<=k<N"
-    def mm(out, a, b):
-        return MStmt(loops=[("i", "N"), ("j", "N"), ("k", "N")],
-                     body=f"{out}[i*N+j] += {a}[i*N+k]*{b}[k*N+j];", output=out, reduction={"k"},
-                     poly=_poly(out, ["i", "j", "k"], dom,
-                                [(out, "i,j")], [(a, "i,k"), (b, "k,j"), (out, "i,j")]))
-    arrays = {x: ("N", "N") for x in ("A", "B", "C", "D", "E", "F", "G")}
-    return MultiKernel("3mm", {"N": S}, arrays,
-                       [mm("E", "A", "B"), mm("F", "C", "D"), mm("G", "E", "F")], final="G")
+
+    def mm(out, a, b, I, J, K):                     # out[I][J] += a[I][K] * b[K][J]
+        return MStmt(loops=[("i", I), ("j", J), ("k", K)],
+                     body=f"{out}[i*{J}+j] += {a}[i*{K}+k]*{b}[k*{J}+j];", output=out, reduction={"k"},
+                     poly=PolyKernel(out, ["i", "j", "k"], f"0<=i<{I} and 0<=j<{J} and 0<=k<{K}",
+                                     [(out, "i,j")], [(a, "i,k"), (b, "k,j"), (out, "i,j")], [I, J, K]))
+    arrays = {"A": ("NI", "NK"), "B": ("NK", "NJ"), "C": ("NJ", "NM"), "D": ("NM", "NL"),
+              "E": ("NI", "NJ"), "F": ("NJ", "NL"), "G": ("NI", "NL")}
+    return MultiKernel("3mm", {"NI": S, "NJ": S, "NK": S, "NL": S, "NM": S}, arrays,
+                       [mm("E", "A", "B", "NI", "NJ", "NK"), mm("F", "C", "D", "NJ", "NL", "NM"),
+                        mm("G", "E", "F", "NI", "NL", "NJ")], final="G")
 
 
 def _matvec_kernel(name, S, arrays, stmts, final):
@@ -218,27 +221,33 @@ def _mvt():
 
 
 def _atax():
-    from .multikernel import MStmt
+    """y = Aᵀ(A·x) with A M×N (PolyBench shapes)."""
+    from .multikernel import MStmt, MultiKernel
     S = 2000
-    d = "0<=i<N and 0<=j<N"
-    arrays = {"A": ("N", "N"), "x": ("N", 1), "tmp": ("N", 1), "y": ("N", 1)}
-    s0 = MStmt([("i", "N"), ("j", "N")], "tmp[i] += A[i*N+j]*x[j];", "tmp", reduction={"j"},
-               poly=_poly("tmp", ["i", "j"], d, [("tmp", "i")], [("A", "i,j"), ("x", "j"), ("tmp", "i")]))
-    s1 = MStmt([("i", "N"), ("j", "N")], "y[j] += A[i*N+j]*tmp[i];", "y", reduction={"i"},
-               poly=_poly("y", ["i", "j"], d, [("y", "j")], [("A", "i,j"), ("tmp", "i"), ("y", "j")]))
-    return _matvec_kernel("atax", S, arrays, [s0, s1], "y")
+    d = "0<=i<M and 0<=j<N"
+    arrays = {"A": ("M", "N"), "x": ("N", 1), "tmp": ("M", 1), "y": ("N", 1)}
+    s0 = MStmt([("i", "M"), ("j", "N")], "tmp[i] += A[i*N+j]*x[j];", "tmp", reduction={"j"},
+               poly=PolyKernel("tmp", ["i", "j"], d, [("tmp", "i")],
+                               [("A", "i,j"), ("x", "j"), ("tmp", "i")], ["M", "N"]))
+    s1 = MStmt([("i", "M"), ("j", "N")], "y[j] += A[i*N+j]*tmp[i];", "y", reduction={"i"},
+               poly=PolyKernel("y", ["i", "j"], d, [("y", "j")],
+                               [("A", "i,j"), ("tmp", "i"), ("y", "j")], ["M", "N"]))
+    return MultiKernel("atax", {"M": S, "N": S}, arrays, [s0, s1], final="y")
 
 
 def _bicg():
-    from .multikernel import MStmt
+    """s = Aᵀ·r, q = A·p with A N×M (PolyBench shapes)."""
+    from .multikernel import MStmt, MultiKernel
     S = 2000
-    d = "0<=i<N and 0<=j<N"
-    arrays = {"A": ("N", "N"), "r": ("N", 1), "p": ("N", 1), "sv": ("N", 1), "q": ("N", 1)}
-    s0 = MStmt([("i", "N"), ("j", "N")], "sv[j] += A[i*N+j]*r[i];", "sv", reduction={"i"},
-               poly=_poly("sv", ["i", "j"], d, [("sv", "j")], [("A", "i,j"), ("r", "i"), ("sv", "j")]))
-    s1 = MStmt([("i", "N"), ("j", "N")], "q[i] += A[i*N+j]*p[j];", "q", reduction={"j"},
-               poly=_poly("q", ["i", "j"], d, [("q", "i")], [("A", "i,j"), ("p", "j"), ("q", "i")]))
-    return _matvec_kernel("bicg", S, arrays, [s0, s1], "q")
+    d = "0<=i<N and 0<=j<M"
+    arrays = {"A": ("N", "M"), "r": ("N", 1), "p": ("M", 1), "sv": ("M", 1), "q": ("N", 1)}
+    s0 = MStmt([("i", "N"), ("j", "M")], "sv[j] += A[i*M+j]*r[i];", "sv", reduction={"i"},
+               poly=PolyKernel("sv", ["i", "j"], d, [("sv", "j")],
+                               [("A", "i,j"), ("r", "i"), ("sv", "j")], ["N", "M"]))
+    s1 = MStmt([("i", "N"), ("j", "M")], "q[i] += A[i*M+j]*p[j];", "q", reduction={"j"},
+               poly=PolyKernel("q", ["i", "j"], d, [("q", "i")],
+                               [("A", "i,j"), ("p", "j"), ("q", "i")], ["N", "M"]))
+    return MultiKernel("bicg", {"N": S, "M": S}, arrays, [s0, s1], final="q")
 
 
 def _gesummv():
@@ -435,23 +444,24 @@ def _fdtd2d():
     so all four spatial sweeps are fully parallel (parallel(i)/parallel(j)/tile)."""
     from .stencil import SStmt, StencilKernel
     N, T = 500, 40
-    s_b = SStmt([("j", "0", "N")], "ey[0*N+j] = (double)t;",
-                PolyKernel("ey", ["j"], "0<=j<N", [("ey", "j")], [], ["N"]))
-    s_ey = SStmt([("i", "1", "N"), ("j", "0", "N")],
-                 "ey[i*N+j] -= 0.5*(hz[i*N+j]-hz[(i-1)*N+j]);",
-                 PolyKernel("ey", ["i", "j"], "1<=i<N and 0<=j<N",
-                            [("ey", "i,j")], [("hz", "i,j"), ("hz", "i-1,j")], ["N"]))
-    s_ex = SStmt([("i", "0", "N"), ("j", "1", "N")],
-                 "ex[i*N+j] -= 0.5*(hz[i*N+j]-hz[i*N+(j-1)]);",
-                 PolyKernel("ex", ["i", "j"], "0<=i<N and 1<=j<N",
-                            [("ex", "i,j")], [("hz", "i,j"), ("hz", "i,j-1")], ["N"]))
-    s_hz = SStmt([("i", "0", "N-1"), ("j", "0", "N-1")],
-                 "hz[i*N+j] -= 0.7*(ex[i*N+(j+1)]-ex[i*N+j]+ey[(i+1)*N+j]-ey[i*N+j]);",
-                 PolyKernel("hz", ["i", "j"], "0<=i<N-1 and 0<=j<N-1",
+    P = ["NX", "NY"]                                     # PolyBench: fields are NX×NY, TMAX steps
+    s_b = SStmt([("j", "0", "NY")], "ey[0*NY+j] = (double)t;",
+                PolyKernel("ey", ["j"], "0<=j<NY", [("ey", "0,j")], [], P))
+    s_ey = SStmt([("i", "1", "NX"), ("j", "0", "NY")],
+                 "ey[i*NY+j] -= 0.5*(hz[i*NY+j]-hz[(i-1)*NY+j]);",
+                 PolyKernel("ey", ["i", "j"], "1<=i<NX and 0<=j<NY",
+                            [("ey", "i,j")], [("hz", "i,j"), ("hz", "i-1,j")], P))
+    s_ex = SStmt([("i", "0", "NX"), ("j", "1", "NY")],
+                 "ex[i*NY+j] -= 0.5*(hz[i*NY+j]-hz[i*NY+(j-1)]);",
+                 PolyKernel("ex", ["i", "j"], "0<=i<NX and 1<=j<NY",
+                            [("ex", "i,j")], [("hz", "i,j"), ("hz", "i,j-1")], P))
+    s_hz = SStmt([("i", "0", "NX-1"), ("j", "0", "NY-1")],
+                 "hz[i*NY+j] -= 0.7*(ex[i*NY+(j+1)]-ex[i*NY+j]+ey[(i+1)*NY+j]-ey[i*NY+j]);",
+                 PolyKernel("hz", ["i", "j"], "0<=i<NX-1 and 0<=j<NY-1",
                             [("hz", "i,j")], [("ex", "i,j+1"), ("ex", "i,j"),
-                                              ("ey", "i+1,j"), ("ey", "i,j")], ["N"]))
-    return StencilKernel("fdtd2d", {"N": N, "TSTEPS": T},
-                         {"ex": ("N", "N"), "ey": ("N", "N"), "hz": ("N", "N")},
+                                              ("ey", "i+1,j"), ("ey", "i,j")], P))
+    return StencilKernel("fdtd2d", {"NX": N, "NY": N, "TSTEPS": T},
+                         {"ex": ("NX", "NY"), "ey": ("NX", "NY"), "hz": ("NX", "NY")},
                          [s_b, s_ey, s_ex, s_hz],
                          reset={"ex": "reinit", "ey": "reinit", "hz": "reinit"}, final="hz")
 
@@ -560,10 +570,8 @@ def _trisolv():
     stmts = [IStmt(I, "x[i] = b[i];"),
              IStmt(I + [("j", "0", "i")], "x[i] -= L[i*N+j]*x[j];"),
              IStmt(I, "x[i] /= L[i*N+i];")]
-    poly = PolyKernel("trisolv", ["i", "j"], "0<=i<N and 0<=j<i",
-                      [("x", "i")], [("L", "i,j"), ("x", "j"), ("x", "i")], ["N"])
     return ImperfectKernel("trisolv", {"N": N}, {"L": ("N", "N"), "x": ("N", 1), "b": ("N", 1)},
-                           stmts, poly, final="x",
+                           stmts, final="x",
                            reset={"L": "reinit", "x": "zero"},
                            setup="for(int d_=0;d_<N;d_++) L[d_*N+d_]+=N;")
 
@@ -580,9 +588,7 @@ def _lu():
     KI = [("k", "0", "N"), ("i", "k+1", "N")]
     stmts = [IStmt(KI, "A[i*N+k] /= A[k*N+k];"),
              IStmt(KI + [("j", "k+1", "N")], "A[i*N+j] -= A[i*N+k]*A[k*N+j];")]
-    poly = PolyKernel("lu", ["k", "i", "j"], "0<=k<N and k<i<N and k<j<N",
-                      [("A", "i,j")], [("A", "i,k"), ("A", "k,j"), ("A", "i,j")], ["N"])
-    return ImperfectKernel("lu", {"N": N}, {"A": ("N", "N")}, stmts, poly, final="A",
+    return ImperfectKernel("lu", {"N": N}, {"A": ("N", "N")}, stmts, final="A",
                            reset={"A": "reinit"}, setup="for(int d_=0;d_<N;d_++) A[d_*N+d_]+=N;")
 
 
@@ -601,9 +607,7 @@ def _cholesky():
              IStmt(IJ, "A[i*N+j] /= A[j*N+j];"),
              IStmt(I + [("k", "0", "i")], "A[i*N+i] -= A[i*N+k]*A[i*N+k];"),
              IStmt(I, "A[i*N+i] = sqrt(A[i*N+i]);")]
-    poly = PolyKernel("cholesky", ["i", "j", "k"], "0<=i<N and 0<=j<i and 0<=k<j",
-                      [("A", "i,j")], [("A", "i,k"), ("A", "j,k"), ("A", "i,j")], ["N"])
-    return ImperfectKernel("cholesky", {"N": N}, {"A": ("N", "N")}, stmts, poly, final="A",
+    return ImperfectKernel("cholesky", {"N": N}, {"A": ("N", "N")}, stmts, final="A",
                            reset={"A": "reinit"}, setup="for(int d_=0;d_<N;d_++) A[d_*N+d_]+=2*N;")
 
 
@@ -634,15 +638,9 @@ def _ludcmp():
         IStmt([("i", "0", "N", "rev"), ("j", "i+1", "N")], "w -= A[i*N+j]*x[j];"),
         IStmt([("i", "0", "N", "rev")], "x[i] = w / A[i*N+i];"),
     ]
-    # binding: the update reads A[k][j] (k<i, an earlier ROW) and A[i][k] (k<i, an
-    # earlier COLUMN) -> i and j are both carried; the full-width domain is what
-    # makes those cross-row/col writes exist so the dependence is seen (a j<i domain
-    # hides them and the engine would wrongly call i parallel).
-    poly = PolyKernel("ludcmp", ["i", "j", "k"], "0<=i<N and 0<=j<N and 0<=k<i",
-                      [("A", "i,j")], [("A", "k,j"), ("A", "i,k"), ("A", "i,j")], ["N"])
     return ImperfectKernel("ludcmp", {"N": N},
                            {"A": ("N", "N"), "b": ("N", 1), "x": ("N", 1), "y": ("N", 1)},
-                           stmts, poly, final="x",
+                           stmts, final="x",
                            reset={"A": "reinit", "x": "zero", "y": "zero"},
                            setup="for(int d_=0;d_<N;d_++) A[d_*N+d_]+=2*N;")
 
@@ -665,15 +663,9 @@ def _durbin():
         IStmt(K + [("i2", "0", "k")], "y[i2] = z[i2];"),
         IStmt(K, "y[k] = alpha;"),
     ]
-    # binding: y[i] is rewritten every step k and the update reads y[k-i-1] -> the
-    # write y[i] vs read y[k-i-1] couples both steps (carried k) and elements within
-    # a step (carried i, when i=k-i'-1). So all naive parallelism is rejected, which
-    # is right: durbin is a fully sequential recurrence.
-    poly = PolyKernel("durbin", ["k", "i"], "1<=k<N and 0<=i<k",
-                      [("y", "i")], [("y", "k-i-1"), ("y", "i")], ["N"])
     return ImperfectKernel("durbin", {"N": N},
                            {"r": ("N", 1), "y": ("N", 1), "z": ("N", 1)},
-                           stmts, poly, final="y",
+                           stmts, final="y",
                            reset={"y": "zero", "z": "zero"},
                            setup="double alpha=-r[0], beta=1.0, sum=0.0; y[0]=-r[0];")
 
@@ -700,12 +692,9 @@ def _gramschmidt():
     # (the A-update uses i2). Model R[k,j] as written+read across i so the i loop
     # carries a dependence and parallel(i) is rejected; parallel(j) stays legal
     # (distinct R[k,j]/A[i,j] per j). k stays sequential via the A[i,j] WAW over k.
-    poly = PolyKernel("gramschmidt", ["k", "j", "i"], "0<=k<N and k<j<N and 0<=i<M",
-                      [("A", "i,j"), ("R", "k,j")],
-                      [("Q", "i,k"), ("R", "k,j"), ("A", "i,j")], ["M", "N"])
     return ImperfectKernel("gramschmidt", {"M": M, "N": N},
                            {"A": ("M", "N"), "R": ("N", "N"), "Q": ("M", "N")},
-                           stmts, poly, final="Q",
+                           stmts, final="Q",
                            reset={"A": "reinit", "R": "zero", "Q": "zero"})
 
 
@@ -720,10 +709,8 @@ def _trmm():
     IJ = [("i", "0", "M"), ("j", "0", "N")]
     stmts = [IStmt(IJ + [("k", "i+1", "M")], "B[i*N+j] += A[k*M+i]*B[k*N+j];"),
              IStmt(IJ, "B[i*N+j] *= 1.5;")]
-    poly = PolyKernel("trmm", ["i", "j", "k"], "0<=i<M and 0<=j<N and i<k<M",
-                      [("B", "i,j")], [("A", "k,i"), ("B", "k,j")], ["M", "N"])
     return ImperfectKernel("trmm", {"M": M, "N": N}, {"A": ("M", "M"), "B": ("M", "N")},
-                           stmts, poly, final="B", reset={"B": "reinit"})
+                           stmts, final="B", reset={"B": "reinit"})
 
 
 def _symm():
@@ -741,16 +728,9 @@ def _symm():
         IStmt(IJ + [("k", "0", "i")], "temp2 += B[k*N+j]*A[i*M+k];"),
         IStmt(IJ, "C[i*N+j] = 1.2*C[i*N+j] + 1.5*B[i*N+j]*A[i*M+i] + 1.5*temp2;"),
     ]
-    # binding statement: the C[k][j] scatter -> output dep carried on i. The fused
-    # `temp2 += ...` reduction over k is modeled by a virtual accumulator acc[i,j]
-    # (written+read for all k), so the k loop carries a dependence and parallel(k) is
-    # correctly rejected. acc is legality-only; codegen emits the IStmt bodies above.
-    poly = PolyKernel("symm", ["i", "j", "k"], "0<=i<M and 0<=j<N and 0<=k<i",
-                      [("C", "k,j"), ("acc", "i,j")],
-                      [("B", "i,j"), ("A", "i,k"), ("C", "k,j"), ("acc", "i,j")], ["M", "N"])
     return ImperfectKernel("symm", {"M": M, "N": N},
                            {"A": ("M", "M"), "B": ("M", "N"), "C": ("M", "N")},
-                           stmts, poly, final="C", reset={"C": "reinit"})
+                           stmts, final="C", reset={"C": "reinit"})
 
 
 def _nussinov():
@@ -768,10 +748,8 @@ def _nussinov():
                   " table[i*N+j] = MAX(table[i*N+j], table[(i+1)*N+(j-1)]+m_); }"),
         IStmt(IJ + [("k", "i+1", "j")], "table[i*N+j] = MAX(table[i*N+j], table[i*N+k]+table[(k+1)*N+j]);"),
     ]
-    poly = PolyKernel("nussinov", ["i", "j", "k"], "0<=i<N and i<j<N and i<k<j",
-                      [("table", "i,j")], [("table", "i,k"), ("table", "k,j")], ["N"])
     return ImperfectKernel("nussinov", {"N": N}, {"table": ("N", "N"), "seq": ("N", 1)},
-                           stmts, poly, final="table", reset={"table": "zero"},
+                           stmts, final="table", reset={"table": "zero"},
                            setup="for(int s_=0;s_<N;s_++) seq[s_]=(double)(s_%4);")
 
 
@@ -781,32 +759,103 @@ IMPERFECT_REGISTRY = {"trisolv": _trisolv, "lu": _lu, "cholesky": _cholesky, "lu
 
 
 # ---- PolyBench size classes (the ×5 instance dimension) --------------------
-# PolyBench/C ships five standard dataset sizes per kernel. Legality is size-
-# independent (domains are symbolic in N/M/K), so a size class only rescales the
-# concrete loop bounds the codegen substitutes. The repo's defaults are LARGE.
-# ponytail: uniform linear scale of every dim, not PolyBench's exact per-kernel
-# NI/NJ/... tables — swap explicit tuples in here if benchmark-faithful sizes
-# matter; the ×5 instance structure and the scheduling problem are identical.
+# MINI..EXTRALARGE are PolyBench/C 4.2.1's own per-kernel dataset sizes (copied
+# from each kernel's .h). DEFAULT is this repo's built-in size for each kernel —
+# what the agent, tests and MCP use unless told otherwise. Legality is size-
+# independent (domains are symbolic), so a size class only changes the concrete
+# loop bounds the codegen substitutes. Kernels that aren't from PolyBench
+# (distmatrix, montecarlo) scale their DEFAULT sizes by SIZE_CLASSES instead.
 SIZE_CLASSES = {"MINI": 1 / 16, "SMALL": 1 / 8, "MEDIUM": 1 / 4, "LARGE": 1.0, "EXTRALARGE": 2.0}
+DEFAULT_SIZE = "DEFAULT"
+SIZE_NAMES = [DEFAULT_SIZE, *SIZE_CLASSES]
+
+POLYBENCH_DATASETS = {   # PolyBench/C 4.2.1 <kernel>.h: class -> parameter -> size
+    "2mm": {"MINI": {"NI": 16, "NJ": 18, "NK": 22, "NL": 24}, "SMALL": {"NI": 40, "NJ": 50, "NK": 70, "NL": 80}, "MEDIUM": {"NI": 180, "NJ": 190, "NK": 210, "NL": 220}, "LARGE": {"NI": 800, "NJ": 900, "NK": 1100, "NL": 1200}, "EXTRALARGE": {"NI": 1600, "NJ": 1800, "NK": 2200, "NL": 2400}},
+    "3mm": {"MINI": {"NI": 16, "NJ": 18, "NK": 20, "NL": 22, "NM": 24}, "SMALL": {"NI": 40, "NJ": 50, "NK": 60, "NL": 70, "NM": 80}, "MEDIUM": {"NI": 180, "NJ": 190, "NK": 200, "NL": 210, "NM": 220}, "LARGE": {"NI": 800, "NJ": 900, "NK": 1000, "NL": 1100, "NM": 1200}, "EXTRALARGE": {"NI": 1600, "NJ": 1800, "NK": 2000, "NL": 2200, "NM": 2400}},
+    "adi": {"MINI": {"TSTEPS": 20, "N": 20}, "SMALL": {"TSTEPS": 40, "N": 60}, "MEDIUM": {"TSTEPS": 100, "N": 200}, "LARGE": {"TSTEPS": 500, "N": 1000}, "EXTRALARGE": {"TSTEPS": 1000, "N": 2000}},
+    "atax": {"MINI": {"M": 38, "N": 42}, "SMALL": {"M": 116, "N": 124}, "MEDIUM": {"M": 390, "N": 410}, "LARGE": {"M": 1900, "N": 2100}, "EXTRALARGE": {"M": 1800, "N": 2200}},
+    "bicg": {"MINI": {"M": 38, "N": 42}, "SMALL": {"M": 116, "N": 124}, "MEDIUM": {"M": 390, "N": 410}, "LARGE": {"M": 1900, "N": 2100}, "EXTRALARGE": {"M": 1800, "N": 2200}},
+    "cholesky": {"MINI": {"N": 40}, "SMALL": {"N": 120}, "MEDIUM": {"N": 400}, "LARGE": {"N": 2000}, "EXTRALARGE": {"N": 4000}},
+    "correlation": {"MINI": {"M": 28, "N": 32}, "SMALL": {"M": 80, "N": 100}, "MEDIUM": {"M": 240, "N": 260}, "LARGE": {"M": 1200, "N": 1400}, "EXTRALARGE": {"M": 2600, "N": 3000}},
+    "covariance": {"MINI": {"M": 28, "N": 32}, "SMALL": {"M": 80, "N": 100}, "MEDIUM": {"M": 240, "N": 260}, "LARGE": {"M": 1200, "N": 1400}, "EXTRALARGE": {"M": 2600, "N": 3000}},
+    "deriche": {"MINI": {"W": 64, "H": 64}, "SMALL": {"W": 192, "H": 128}, "MEDIUM": {"W": 720, "H": 480}, "LARGE": {"W": 4096, "H": 2160}, "EXTRALARGE": {"W": 7680, "H": 4320}},
+    "doitgen": {"MINI": {"NQ": 8, "NR": 10, "NP": 12}, "SMALL": {"NQ": 20, "NR": 25, "NP": 30}, "MEDIUM": {"NQ": 40, "NR": 50, "NP": 60}, "LARGE": {"NQ": 140, "NR": 150, "NP": 160}, "EXTRALARGE": {"NQ": 220, "NR": 250, "NP": 270}},
+    "durbin": {"MINI": {"N": 40}, "SMALL": {"N": 120}, "MEDIUM": {"N": 400}, "LARGE": {"N": 2000}, "EXTRALARGE": {"N": 4000}},
+    "fdtd-2d": {"MINI": {"TMAX": 20, "NX": 20, "NY": 30}, "SMALL": {"TMAX": 40, "NX": 60, "NY": 80}, "MEDIUM": {"TMAX": 100, "NX": 200, "NY": 240}, "LARGE": {"TMAX": 500, "NX": 1000, "NY": 1200}, "EXTRALARGE": {"TMAX": 1000, "NX": 2000, "NY": 2600}},
+    "floyd-warshall": {"MINI": {"N": 60}, "SMALL": {"N": 180}, "MEDIUM": {"N": 500}, "LARGE": {"N": 2800}, "EXTRALARGE": {"N": 5600}},
+    "gemm": {"MINI": {"NI": 20, "NJ": 25, "NK": 30}, "SMALL": {"NI": 60, "NJ": 70, "NK": 80}, "MEDIUM": {"NI": 200, "NJ": 220, "NK": 240}, "LARGE": {"NI": 1000, "NJ": 1100, "NK": 1200}, "EXTRALARGE": {"NI": 2000, "NJ": 2300, "NK": 2600}},
+    "gemver": {"MINI": {"N": 40}, "SMALL": {"N": 120}, "MEDIUM": {"N": 400}, "LARGE": {"N": 2000}, "EXTRALARGE": {"N": 4000}},
+    "gesummv": {"MINI": {"N": 30}, "SMALL": {"N": 90}, "MEDIUM": {"N": 250}, "LARGE": {"N": 1300}, "EXTRALARGE": {"N": 2800}},
+    "gramschmidt": {"MINI": {"M": 20, "N": 30}, "SMALL": {"M": 60, "N": 80}, "MEDIUM": {"M": 200, "N": 240}, "LARGE": {"M": 1000, "N": 1200}, "EXTRALARGE": {"M": 2000, "N": 2600}},
+    "heat-3d": {"MINI": {"TSTEPS": 20, "N": 10}, "SMALL": {"TSTEPS": 40, "N": 20}, "MEDIUM": {"TSTEPS": 100, "N": 40}, "LARGE": {"TSTEPS": 500, "N": 120}, "EXTRALARGE": {"TSTEPS": 1000, "N": 200}},
+    "jacobi-1d": {"MINI": {"TSTEPS": 20, "N": 30}, "SMALL": {"TSTEPS": 40, "N": 120}, "MEDIUM": {"TSTEPS": 100, "N": 400}, "LARGE": {"TSTEPS": 500, "N": 2000}, "EXTRALARGE": {"TSTEPS": 1000, "N": 4000}},
+    "jacobi-2d": {"MINI": {"TSTEPS": 20, "N": 30}, "SMALL": {"TSTEPS": 40, "N": 90}, "MEDIUM": {"TSTEPS": 100, "N": 250}, "LARGE": {"TSTEPS": 500, "N": 1300}, "EXTRALARGE": {"TSTEPS": 1000, "N": 2800}},
+    "lu": {"MINI": {"N": 40}, "SMALL": {"N": 120}, "MEDIUM": {"N": 400}, "LARGE": {"N": 2000}, "EXTRALARGE": {"N": 4000}},
+    "ludcmp": {"MINI": {"N": 40}, "SMALL": {"N": 120}, "MEDIUM": {"N": 400}, "LARGE": {"N": 2000}, "EXTRALARGE": {"N": 4000}},
+    "mvt": {"MINI": {"N": 40}, "SMALL": {"N": 120}, "MEDIUM": {"N": 400}, "LARGE": {"N": 2000}, "EXTRALARGE": {"N": 4000}},
+    "nussinov": {"MINI": {"N": 60}, "SMALL": {"N": 180}, "MEDIUM": {"N": 500}, "LARGE": {"N": 2500}, "EXTRALARGE": {"N": 5500}},
+    "seidel-2d": {"MINI": {"TSTEPS": 20, "N": 40}, "SMALL": {"TSTEPS": 40, "N": 120}, "MEDIUM": {"TSTEPS": 100, "N": 400}, "LARGE": {"TSTEPS": 500, "N": 2000}, "EXTRALARGE": {"TSTEPS": 1000, "N": 4000}},
+    "symm": {"MINI": {"M": 20, "N": 30}, "SMALL": {"M": 60, "N": 80}, "MEDIUM": {"M": 200, "N": 240}, "LARGE": {"M": 1000, "N": 1200}, "EXTRALARGE": {"M": 2000, "N": 2600}},
+    "syr2k": {"MINI": {"M": 20, "N": 30}, "SMALL": {"M": 60, "N": 80}, "MEDIUM": {"M": 200, "N": 240}, "LARGE": {"M": 1000, "N": 1200}, "EXTRALARGE": {"M": 2000, "N": 2600}},
+    "syrk": {"MINI": {"M": 20, "N": 30}, "SMALL": {"M": 60, "N": 80}, "MEDIUM": {"M": 200, "N": 240}, "LARGE": {"M": 1000, "N": 1200}, "EXTRALARGE": {"M": 2000, "N": 2600}},
+    "trisolv": {"MINI": {"N": 40}, "SMALL": {"N": 120}, "MEDIUM": {"N": 400}, "LARGE": {"N": 2000}, "EXTRALARGE": {"N": 4000}},
+    "trmm": {"MINI": {"M": 20, "N": 30}, "SMALL": {"M": 60, "N": 80}, "MEDIUM": {"M": 200, "N": 240}, "LARGE": {"M": 1000, "N": 1200}, "EXTRALARGE": {"M": 2000, "N": 2600}},
+}
+
+# repo kernel -> (PolyBench kernel, {repo size parameter: PolyBench parameter})
+POLYBENCH = {
+    "gemm": ("gemm", {"N": "NI", "M": "NJ", "K": "NK"}),
+    "syrk": ("syrk", {"N": "N", "K": "M"}), "syrk_tri": ("syrk", {"N": "N", "K": "M"}),
+    "syr2k": ("syr2k", {"N": "N", "K": "M"}), "syr2k_tri": ("syr2k", {"N": "N", "K": "M"}),
+    "floydwarshall": ("floyd-warshall", {"N": "N"}),
+    "2mm": ("2mm", {"N": "NI", "M": "NJ", "K": "NK", "L": "NL"}),
+    "3mm": ("3mm", {p: p for p in ("NI", "NJ", "NK", "NL", "NM")}),
+    "mvt": ("mvt", {"N": "N"}), "gesummv": ("gesummv", {"N": "N"}), "gemver": ("gemver", {"N": "N"}),
+    "atax": ("atax", {"M": "M", "N": "N"}), "bicg": ("bicg", {"N": "N", "M": "M"}),
+    "covariance": ("covariance", {"N": "N", "M": "M"}), "correlation": ("correlation", {"N": "N", "M": "M"}),
+    "doitgen": ("doitgen", {"R": "NR", "Q": "NQ", "P": "NP"}),
+    "jacobi1d": ("jacobi-1d", {"N": "N", "TSTEPS": "TSTEPS"}),
+    "jacobi2d": ("jacobi-2d", {"N": "N", "TSTEPS": "TSTEPS"}),
+    "seidel2d": ("seidel-2d", {"N": "N", "TSTEPS": "TSTEPS"}),
+    "heat3d": ("heat-3d", {"N": "N", "TSTEPS": "TSTEPS"}),
+    "fdtd2d": ("fdtd-2d", {"NX": "NX", "NY": "NY", "TSTEPS": "TMAX"}),
+    "adi": ("adi", {"N": "N", "TSTEPS": "TSTEPS"}),
+    "deriche": ("deriche", {"W": "W", "H": "H"}),
+    "trisolv": ("trisolv", {"N": "N"}), "lu": ("lu", {"N": "N"}), "cholesky": ("cholesky", {"N": "N"}),
+    "ludcmp": ("ludcmp", {"N": "N"}), "durbin": ("durbin", {"N": "N"}),
+    "gramschmidt": ("gramschmidt", {"M": "M", "N": "N"}), "trmm": ("trmm", {"M": "M", "N": "N"}),
+    "symm": ("symm", {"M": "M", "N": "N"}), "nussinov": ("nussinov", {"N": "N"}),
+}
+
+
+def _sizes(name, default, size):
+    """Concrete sizes for `name` at `size`, starting from its DEFAULT sizes."""
+    if size == DEFAULT_SIZE:
+        return dict(default)
+    if name in POLYBENCH:
+        pb, rename = POLYBENCH[name]
+        table = POLYBENCH_DATASETS[pb][size]
+        return {**default, **{p: table[q] for p, q in rename.items()}}
+    return _scale(default, SIZE_CLASSES[size])
 
 
 def _scale(sizes, f):
     return {k: max(2, round(v * f)) for k, v in sizes.items()}
 
 
-def sized_kernel(name, size="LARGE"):
-    """Kernel object(s) for `name` with loop bounds rescaled to a PolyBench size class.
+def sized_kernel(name, size=DEFAULT_SIZE):
+    """Kernel object(s) for `name` at a size class (see SIZE_NAMES).
 
-    Single-statement -> (exec_kernel, poly_kernel); multi/stencil -> the
-    (Multi|Stencil)Kernel. `size` defaults to LARGE (the registry's own sizes),
-    so existing callers are unaffected.
+    Single-statement -> (exec_kernel, poly_kernel); multi/stencil/imperfect -> the
+    kernel object. DEFAULT is the registry's own sizes; MINI..EXTRALARGE are
+    PolyBench's dataset tables (scale factors for the non-PolyBench extras).
     """
-    if size not in SIZE_CLASSES:
-        raise ValueError(f"unknown size class {size!r}; pick one of {sorted(SIZE_CLASSES)}")
-    f = SIZE_CLASSES[size]
+    if size not in SIZE_NAMES:
+        raise ValueError(f"unknown size class {size!r}; pick one of {SIZE_NAMES}")
     if name in REGISTRY:
         ek, pk = REGISTRY[name]
-        return replace(ek, sizes=_scale(ek.sizes, f)), replace(pk, sizes=_scale(pk.sizes, f))
+        sizes = _sizes(name, ek.sizes, size)
+        return replace(ek, sizes=sizes), replace(pk, sizes={k: sizes[k] for k in pk.sizes})
     if name in STENCIL_REGISTRY:
         sk = STENCIL_REGISTRY[name]()
     elif name in MULTI_REGISTRY:
@@ -815,5 +864,5 @@ def sized_kernel(name, size="LARGE"):
         sk = IMPERFECT_REGISTRY[name]()
     else:
         raise KeyError(name)
-    sk.sizes = _scale(sk.sizes, f)        # fresh object per call -> safe to mutate
+    sk.sizes = _sizes(name, sk.sizes, size)        # fresh object per call -> safe to mutate
     return sk

@@ -25,6 +25,12 @@ PRELUDE = """#define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define floord(n,d) (((n) < 0) ? -((-(n) + (d) - 1) / (d)) : (n) / (d))
 #define ceild(n,d) (((n) < 0) ? -((-(n)) / (d)) : ((n) + (d) - 1) / (d))"""
 
+# Printed after TIME/CHECKSUM by every generated program; runner records it so a
+# measurement says how many threads it ran with.
+THREADS = """#ifdef _OPENMP
+  printf("THREADS %d\\n", omp_get_max_threads());
+#endif"""
+
 
 def _loop_lohi(entry):
     """A loop entry is (var, hi) [lo=0] or (var, lo, hi)."""
@@ -149,6 +155,7 @@ int main(void) {{
   }}
 {checksum}
   printf("TIME %.9f\\nCHECKSUM %.6e\\n", best, sum);
+{THREADS}
 {frees}
   return 0;
 }}

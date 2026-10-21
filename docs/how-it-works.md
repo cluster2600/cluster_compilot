@@ -26,22 +26,24 @@ Single runs of a parallel kernel are noisy (the same schedule can measure 2–3�
 
 - **`backend_isl`** uses ISL directly (`islpy`) — the same library Tiramisu wraps.
 - **`backends/tiramisu.py`** drives the **real Tiramisu compiler** we built; the two agree **4/4** on directly-comparable transforms (see [test results](test-results.md)).
-- **`polyhedral_multi.py`** extends legality to multiple statements (2d+1 schedules) — the gate for `fuse`/`shift` and multi-statement kernels.
+- **`union.py`** models several statements at once (2d+1 schedules, accesses read from the C): exact legality for imperfect nests and for fused statement sequences, plus the ISL codegen for both. (`polyhedral_multi.py` is the earlier 2d+1 legality prototype `test_multistatement` exercises.)
 
-## The 9-primitive schedule DSL
+## The schedule DSL
 
 ```
 interchange(La, Lb)              reorder(La, Lb, Lc, ...)
 tile(L, T)                       tile2d(La, Lb, Ta, Tb)      tile3d(La, Lb, Lc, Ta, Tb, Tc)
 parallel(L)                      unroll(L, F)
 skew(Ltarget, Lsrc, factor)      reverse(L)
+shift(L, c)                      fuse(L)                     (multi-statement / stencil)
 ```
 
-Legality and execution cover all of these for single-statement nests and per statement in multi-statement/stencil kernels (`fuse`/`shift` need the multi-statement model; imperfect-nest solvers execute `parallel` only).
+Legality and execution cover all of these for single-statement nests and per statement in multi-statement/stencil kernels; `fuse` (and `shift` for alignment) run the statement sequence as one union. Imperfect-nest solvers execute `parallel` only.
 
 Semantics worth knowing:
 - **Tiling** follows Tiramisu: tile loops are inserted together, in argument order, just outside the outermost tiled loop. On nest `(i, k, j)`, `tile2d(i, j, 32, 32)` gives `(i_t, j_t, i, k, j)`; a single `tile(L, T)` is a strip-mine (`L_t` directly outside `L`).
 - **`skew`/`reverse`** act on a loop's current value, so `skew(j, i, 1)` + `interchange(i, j)` is a wavefront (`j+i` outermost) and `reverse(i_t)` reverses whole tiles.
+- **`fuse(L)`** in statement k's block runs it inside statement k−1's loops down to and including `L` (loops matched by position), after k−1's body there. **`shift(L, c)`** offsets `L` by `c`; alone it changes nothing, but it is what makes many fusions legal — jacobi's second sweep reads `B[i+1]`, so `shift(i, 1)` then `fuse(i)` delays it one iteration.
 - Every loop label an op names is validated when θ′ is built; a typo is an `invalid` result, not an error.
 
 ## Secrets

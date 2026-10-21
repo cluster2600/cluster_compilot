@@ -80,10 +80,15 @@ def test_transforms_execute_as_proven():
         r = gemm.evaluate(sched)
         assert r.status == "success", f"gemm {sched!r}: {r.status} ({r.detail[:160]})"
     # wavefront: t carries the recurrence, so after skewing t by s the inner s loop is parallel
-    mc = environment("montecarlo", "SMALL").evaluate("skew(t, s, 1)\ninterchange(s, t)\nparallel(s)")
+    from compilot.backend_isl import Environment
+    ek, pk = sized_kernel("montecarlo", "MINI")
+    ek.sizes.update(M=512, T=32)    # one fork/join per wavefront step: small on purpose
+    mc = Environment(ek, pk).evaluate("skew(t, s, 1)\ninterchange(s, t)\nparallel(s)")
     assert mc.status == "success", (mc.status, mc.detail[:160])
     # seidel-2d's 9-point dependences need the j+2i wavefront; j+i is a race
-    se = StencilEnvironment(sized_kernel("seidel2d", "SMALL"))
+    sk = sized_kernel("seidel2d", "MINI")
+    sk.sizes["TSTEPS"] = 2          # a fork/join per wavefront step: keep it small, it's a correctness test
+    se = StencilEnvironment(sk)
     assert se.evaluate(["skew(j, i, 1)\ninterchange(i, j)\nparallel(i)"])["status"] == "parallel_illegal"
     r = se.evaluate(["skew(j, i, 2)\ninterchange(i, j)\nparallel(i)"])
     assert r["status"] == "success", r
