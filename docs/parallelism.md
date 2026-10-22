@@ -117,6 +117,8 @@ python3 run_agent.py --moa "gemini:gemini-2.5-flash,local:qwen2.5-coder:32b" \
         --aggregator gemini:gemini-2.5-pro --candidates 2
 ```
 
+Each model is a `backend:model` spec (`gemini:…`, `local:…`, `mock`), split on the first `:`, so Ollama tags like `qwen2.5-coder:32b` survive. MoA covers both single- and multi-statement kernels: for multi-statement kernels each agent proposes one complete schedule set (one block per statement), and whole sets are pooled and measured. Local servers get `OPENAI_API_KEY` as a bearer token when it is set (Ollama ignores it); point `--backend local --base-url …` at any OpenAI-compatible server (Ollama, vLLM, NVIDIA NIM, LM Studio, llama.cpp), or mix providers per agent with `--moa` specs.
+
 `tests/test_moa.py` exercises the pool/dedupe/measure path offline (mock references + aggregator on GEMM, no key) and checks the OpenAI role mapping.
 
 ## Correctness
@@ -135,6 +137,8 @@ identical GEMM `reorder(i,k,j)` + `parallel(i)` runs on a 16-core box measured
 `env.confirm` re-runs it `CONFIRM_ROUNDS` times (under `_RUN_LOCK`) and keeps the
 median; `bench.py`/`baselines.py` use `interleaved=True`, which alternates
 baseline and candidate runs (ABBA…) and keeps the median ratio.
+
+Every generated program also prints its OpenMP thread count, the runner warns when the machine is busy (1-minute load average above half the CPUs, where parallel speedups suffer most), and `COMPILOT_OMP_BIND=1` opts into pinned threads (`OMP_PROC_BIND=close`, `OMP_PLACES=cores`). Pinning is off by default because on WSL2 it didn't reduce the run-to-run spread.
 
 A measured illustration of the measurement lock's effect (mock GEMM, best-of-3):
 without it, simultaneous timed runs depressed an honest ~50× to 8–21×; with it,

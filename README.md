@@ -1,6 +1,71 @@
 # cluster_compilot
 
-A faithful, from-scratch implementation of **ComPilot** — *Agentic Auto-Scheduling: LLM-Guided Loop Optimization* ([arXiv:2511.00592](https://arxiv.org/abs/2511.00592), Merouani, Kara Bernou & Baghdadi, PACT 2025).
+**An AI agent that makes number-crunching code run faster, and a math engine that proves every change is safe before it is used.**
+
+![How it works: the AI proposes, the math checker proves, the run measures, the feedback goes back to the AI](docs/images/overview.png)
+
+## In plain words
+
+Much of the world's heavy computing, such as training AI models, weather forecasts, physics simulations or financial risk models, spends most of its time repeating a few calculations over huge tables of numbers. How a program walks through those numbers (in which order, in which chunks, and on how many processor cores at once) can make the same calculation **10 to 40 times faster or slower**, with exactly the same result.
+
+Finding the best arrangement is specialist work. This project hands it to an AI model, with a safety net:
+
+1. **The AI proposes** a new arrangement of the calculation.
+2. **A mathematical checker proves** that the new arrangement still computes exactly the same result. If it can't prove it, the idea is rejected and the AI is told why. This uses the *polyhedral model*, a branch of compiler mathematics also used inside production compilers such as LLVM's Polly.
+3. **The new version is built, run and timed** against the original, and its output is compared with the original's.
+4. **The AI gets the verdict and the measured speed-up**, and tries again. The fastest version that was both proven and measured wins.
+
+Think of a creative junior engineer (the AI), a strict reviewer who can prove whether a change is safe (the checker), and a stopwatch. Nothing the AI suggests is used until it has been proven correct and measured.
+
+## Results
+
+| What was measured | Result |
+|---|---|
+| Matrix multiplication, the core operation of AI models, at the standard benchmark size | **10× faster** |
+| Average over 14 standard benchmark programs | **3× faster** |
+| Against the simple automatic approach (running the outer loop on all cores) | **1.55× faster** on average, **4.3×** on matrix multiplication |
+| Best run with a live AI model (Google Gemini) on matrix multiplication, earlier version, single measurement | **42× faster** |
+| Correctness | every accepted change is proven safe, and its output is checked against the original |
+
+The programs come from PolyBench, the standard benchmark suite for this kind of optimization, and were timed on a shared 16-core Linux machine, so read the numbers as indicative. The [engineering section](#for-engineers) has the details and caveats.
+
+## Why it matters
+
+- **Speed is money and energy.** A calculation that runs 10× faster needs a tenth of the computing time: lower cloud bills, less electricity, quicker results.
+- **AI that can be trusted with critical work.** AI models make confident mistakes. This project shows one way to use them safely: let the AI be creative, but check every suggestion with mathematics and real measurements before accepting it.
+
+## What's in the project
+
+- **A research paper rebuilt from scratch.** It reimplements *ComPilot* (PACT 2025, [arXiv:2511.00592](https://arxiv.org/abs/2511.00592)) and cross-checks its verdicts against the paper's own research compiler, Tiramisu.
+- **The whole standard benchmark.** All 30 PolyBench programs, each in its 5 standard sizes.
+- **Several AI models.** Google Gemini, models running on your own machine (Ollama, vLLM and similar), or a team of models whose proposals are all measured and the fastest kept.
+- **A tool for AI coding assistants.** Claude Code and OpenAI Codex can call it through the Model Context Protocol (MCP).
+- **A live dashboard** in the terminal that shows the search as it happens.
+- **Released and tested.** A Docker image for Intel and ARM machines, an npm package, and a Python package (on PyPI from 0.3.1). 19 automated test modules run on every change, on Python 3.14 and 3.15.
+
+## Skills it demonstrates
+
+| Area | In this project |
+|---|---|
+| AI agents | an LLM in a tool loop with structured feedback, best-of-K search, a mixture of agents, an MCP server |
+| Compilers and formal methods | polyhedral dependence analysis, legality proofs and code generation with ISL |
+| High-performance computing | C with OpenMP multi-core parallelism, loop tiling and fusion, benchmarking with robust timing statistics |
+| Software engineering | Python 3.14/3.15, 19 test modules, continuous integration, code review |
+| Release engineering and security | multi-architecture Docker images, npm and PyPI publishing without stored tokens, protection against server-side request forgery, pinned dependencies |
+
+## Words used above
+
+- **Compiler:** the tool that turns code written by people into a program a computer can run.
+- **Loop:** a piece of code that repeats a calculation many times. Heavy programs spend most of their time in loops.
+- **Speed-up:** how many times faster the new version runs. 10× means it takes a tenth of the time.
+- **LLM (AI model):** a large language model such as Gemini or Claude, which can read and write code.
+- **Proven safe ("legal"):** the checker has shown mathematically that the new version always produces the same result as the original.
+
+---
+
+## For engineers
+
+A faithful, from-scratch implementation of **ComPilot**: *Agentic Auto-Scheduling: LLM-Guided Loop Optimization* ([arXiv:2511.00592](https://arxiv.org/abs/2511.00592), Merouani, Kara Bernou & Baghdadi, PACT 2025).
 
 An off-the-shelf LLM acts as an agent that proposes loop transformations. A compiler-grade **polyhedral legality engine** proves whether each schedule is legal, and the transformed code is compiled and **executed for real wall-clock speedup**. The LLM iterates on that feedback. No fine-tuning.
 
@@ -12,7 +77,7 @@ An off-the-shelf LLM acts as an agent that proposes loop transformations. A comp
 
 ![architecture](docs/images/architecture.png)
 
-## Documentation
+### Documentation
 
 Full docs live in [`docs/`](docs/):
 
@@ -22,9 +87,11 @@ Full docs live in [`docs/`](docs/):
 | [How it works](docs/how-it-works.md) | Evaluation pipeline (parse → θ′ → ISL legality → measure), feedback categories, the DSL |
 | [Building (step by step)](docs/building.md) | Prereqs → deps → key → smoke test → optional Tiramisu build |
 | [User guide (step by step)](docs/user-guide.md) | Run the agent, eval, benchmark, tests; write schedules; add a kernel |
+| [Parallelism](docs/parallelism.md) | Thread fan-out, the legality and measurement locks, re-measurement, Mixture of Agents |
 | [Test results](docs/test-results.md) | Real test + benchmark output, with screenshots |
+| [Roadmap](docs/roadmap.md) | What's next, in priority order, with the evidence behind each item |
 
-## Quick start
+### Quick start
 
 Requires **Python 3.14+**; CI runs the suite on 3.14 and 3.15 (islpy ships `cp314` and `cp315` wheels; see [Parallelism](#parallelism-python-314) below for why 3.14). To use only the MCP server or the library, `pip install compilot` (on PyPI from 0.3.1) and a clang with OpenMP are enough; the checkout below is for running the tests and benchmarks.
 
@@ -46,38 +113,24 @@ python3 run_agent.py --moa "gemini:gemini-2.5-flash,local:qwen2.5-coder:32b" \
         --aggregator gemini:gemini-2.5-pro  # Mixture of Agents (pool & measure)
 ```
 
-### Parallelism (Python 3.14)
+#### Parallelism (Python 3.14)
 
-The search fans out across threads in two places:
+The search fans out across threads: the K dialogues of **best-of-k** run concurrently, and `--candidates N` lets the LLM propose up to N schedules per turn, compiled and measured in parallel. This scales on the standard interpreter because the heavy work (LLM HTTP calls, `clang` compile and run) releases the GIL. Two locks keep it correct: the **legality lock** serializes the (fast) ISL section, because islpy's context isn't thread-safe, and the **measurement lock** lets only one *timed* binary run at a time, so concurrent runs can't bias the speedups being optimized.
 
-- **best-of-k** — the K independent dialogues run concurrently (`ThreadPoolExecutor`).
-- **candidates per turn** — `--candidates N` lets the LLM propose up to N schedules in one turn, compiled and measured in parallel.
+A single timed run of a parallel kernel is still noisy (twelve identical GEMM runs on a 16-core box measured 21–67×), so a raw speedup that would set a new best is **re-measured** first (median of fresh runs) and only the confirmed number is kept. `bench.py`/`baselines.py` alternate baseline and candidate runs. Details, timelines and measurements: [docs/parallelism.md](docs/parallelism.md).
 
-This scales on the **standard** interpreter because the heavy work releases the GIL: the LLM HTTP calls and the `clang` compile/run are I/O- and subprocess-bound. (Free-threaded `3.14t` is *not* used — `islpy` ships no `cp314t` wheel, and it would add little here since the in-process polyhedral work is a small slice.) Two locks keep this correct:
+#### Mixture of Agents (`--moa`) + local models
 
-- **legality lock** (`polyhedral.ISL_LOCK`, also `backend_isl._ISL_LOCK`) — islpy builds objects in a process-global, non-thread-safe ISL context, so in every environment (single, multi-statement, stencil, imperfect) the (fast) θ′ construction / legality / parallelism / ISL-codegen section is serialized; compile/run stays outside it.
-- **measurement lock** (`runner._RUN_LOCK`) — only one *timed* binary executes at a time. Concurrent benchmark processes would contend for cores/caches and bias the very wall-clock speedup being optimized; compiles and LLM calls still overlap, so the search is parallel while the numbers stay trustworthy.
-
-Every program also prints its OpenMP thread count, the runner warns when the machine is busy (1-minute load average above half the CPUs — parallel speedups suffer most), and `COMPILOT_OMP_BIND=1` opts into pinned threads (`OMP_PROC_BIND=close`, `OMP_PLACES=cores`; off by default because on WSL2 it didn't reduce run-to-run spread).
-
-Even with the run lock, one timed run of a parallel kernel is noisy — twelve identical GEMM `reorder(i, k, j)` + `parallel(i)` runs on a 16-core box measured 21–67×. So a raw speedup that would set a new best is **re-measured** first (`env.confirm`: median of `CONFIRM_ROUNDS` fresh runs), and only the confirmed number is kept; otherwise best-of-K and multi-candidate search would report their luckiest sample. `bench.py`/`baselines.py` go further and alternate baseline and candidate runs (`confirm(..., interleaved=True)`).
-
-### Mixture of Agents (`--moa`) + local models
-
-A third fan-out axis, in the spirit of [Hermes' Mixture of Agents](https://hermes-agent.nousresearch.com/docs/user-guide/features/mixture-of-agents): each turn, several **reference** models propose schedules in parallel and an **aggregator** model synthesizes its own informed by theirs. Unlike Hermes — which has no ground-truth evaluator and lets the aggregator pick — ComPilot is **pool & measure**: every proposal (references' and aggregator's) is deduped, compiled, and **measured** by the real oracle in parallel, and the best measured speedup wins. Diverse proposers, objective selection.
+Each turn, several **reference** models propose schedules in parallel and an **aggregator** model synthesizes its own, informed by theirs (in the spirit of [Hermes' Mixture of Agents](https://hermes-agent.nousresearch.com/docs/user-guide/features/mixture-of-agents)). Unlike Hermes, whose aggregator picks, ComPilot is **pool & measure**: every proposal is deduped, compiled and **measured**, and the best measured speedup wins.
 
 ```bash
 python3 run_agent.py --moa "gemini:gemini-2.5-flash,local:qwen2.5-coder:32b" \
         --aggregator gemini:gemini-2.5-pro --candidates 2
 ```
 
-Each model is a `backend:model` spec (`gemini:…`, `local:…`, `mock`; split on the first `:`, so Ollama tags like `qwen2.5-coder:32b` survive). References run hotter (0.9) for diversity, the aggregator cooler (0.4). MoA covers both single- and multi-statement kernels (for multi-statement, each agent proposes one complete schedule set — one block per statement — and whole sets are pooled and measured).
+**Local models** go through one OpenAI-compatible client (`/v1/chat/completions`): Ollama, vLLM, NVIDIA NIM, LM Studio, llama.cpp. Spec format, temperatures and multi-statement behaviour: [docs/parallelism.md](docs/parallelism.md#mixture-of-agents---moa). The [building guide](docs/building.md) and [user guide](docs/user-guide.md) cover the rest (live keys, Tiramisu build, adding kernels).
 
-**Local models** use one OpenAI-compatible client (`compilot/llm.OpenAIClient`) against `/v1/chat/completions` — Ollama (`…/v1`), vLLM, NVIDIA NIM, LM Studio, llama.cpp. Point `--backend local --base-url` at the server, or mix providers per-agent via `--moa` specs. `OPENAI_API_KEY` is sent as a bearer token when set (unused by Ollama).
-
-See the [building guide](docs/building.md) and [user guide](docs/user-guide.md) for everything else (live keys, Tiramisu build, adding kernels).
-
-### MCP server + TUI monitor
+#### MCP server + TUI monitor
 
 Two extra entry points (installed by `pip install -e .`):
 
@@ -90,12 +143,12 @@ compilot-mcp                                  # MCP stdio server (Claude Code / 
 The **MCP server** (`compilot/mcp_server.py`, hand-rolled stdio JSON-RPC — no SDK dep) exposes three tools: `list_kernels`, `check_legality(kernel, schedule)` (ISL verdict + one measured speedup, no LLM; the baseline is timed once per kernel+size and reused), and `optimize(kernel, backend=mock, …)` (the full agent loop). Wire it into Claude Code or Codex via the npm launcher — see [`npm/README.md`](npm/README.md):
 
 ```bash
-COMPILOT_PYTHON=$PWD/.venv/bin/python claude mcp add compilot -- npx -y @cluster2600/compilot-mcp
+claude mcp add compilot -e COMPILOT_PYTHON=$PWD/.venv/bin/python -- npx -y @cluster2600/compilot-mcp
 ```
 
 The **TUI** (`compilot/tui.py`, stdlib `curses`) watches the parallel search live via a lightweight `on_eval` hook on every runner — single-statement, multi-statement, and MoA fan-out all stream measured candidates into a top-speedups board while a maneki-neko waves on each new record. `--backend mock` runs offline; add `--moa <specs>` to watch the Mixture-of-Agents pool.
 
-## Test results
+### Test results
 
 All suites pass; the benchmark is reproducible (`python3 bench.py`). Full output + screenshots in [docs/test-results.md](docs/test-results.md).
 
@@ -112,7 +165,7 @@ All suites pass; the benchmark is reproducible (`python3 bench.py`). Full output
 
 **Benchmark** (`python3 bench.py`, no LLM): originally reported on Apple Silicon from single timed runs and the old strip-mining `tile2d` — gemm ~26–31× · syrk ~5× · syr2k ~5× · floyd ~1× · **geomean ~5×**; live Gemini **42× GEMM**, ~13× geomean. Each bench speedup is now the median of 5 interleaved baseline/candidate runs; re-measured on a busy 16-core Linux host: gemm 25.8×, **geomean 1.8×** over 15 kernels at the built-in sizes; at PolyBench **LARGE** (the bench default since 0.3.0): gemm 10.4× · 2mm 11.7× · 3mm 7.0× · **geomean 3.0×** over 14 kernels ([details + caveats](docs/test-results.md#polybench-large-030)). Floyd-Warshall stays ~1×: its `i`/`j` loops are parallel in practice (row/column `k` don't change at step `k`), but memory-based dependence analysis can't see that, so they're conservatively rejected.
 
-## Repo layout
+### Repo layout
 
 | File | Role |
 |---|---|
@@ -132,7 +185,7 @@ All suites pass; the benchmark is reproducible (`python3 bench.py`). Full output
 
 **Kernels — full PolyBench/C 4.2.1 (30/30) + extras:** single — `gemm`, `syrk`, `syr2k`, `syrk_tri`, `syr2k_tri`, `floydwarshall`; multi-statement — `2mm`, `3mm`, `mvt`, `atax`, `bicg`, `gesummv`, `gemver`, `covariance`, `correlation`, `doitgen` (3-D); imperfect-nest solvers/BLAS — `trisolv`, `lu`, `cholesky`, `ludcmp`, `durbin`, `gramschmidt`, `trmm`, `symm`, `nussinov`; stencils — `jacobi1d`, `jacobi2d`, `seidel2d`, `heat3d` (3-D), `fdtd2d`, `adi`, `deriche`. Spanning matmul, matvec, reduction, **triangular**, **fusion**, **in-place**, **datamining**, **3-D**, **time-stepped stencils** (jacobi parallelizes; seidel's in-place 9-point sweep rejects naive parallelism, and the skewed `j+2i` wavefront is proven legal and runs in parallel), and **loop-carried solvers** (sequential carried loops correctly rejected; independent foralls accepted + checksum-verified). Drive any of them: `python3 run_agent.py --kernel <name>`.
 
-## Status & roadmap
+### Status & roadmap
 
 **What's next:** [docs/roadmap.md](docs/roadmap.md) — the prioritized plan after 0.3.0 (Python 3.15, PyPI, a Polly baseline, quiet-machine and live-LLM numbers, then parallel reductions and tiling for imperfect nests).
 
@@ -151,6 +204,6 @@ All suites pass; the benchmark is reproducible (`python3 bench.py`). Full output
 - **Backward sweeps** (adi's Thomas back-substitution, deriche's right-to-left/bottom-up IIR passes, ludcmp's back-solve) run over an ascending index `jj` with `j=N-2-jj`, so the forward-only emitters stay correct while the dependence direction is modeled faithfully.
 - *ponytail caveat:* the legality + codegen infrastructure is the deliverable, not solver speedups — the per-step-barrier parallel solvers rarely beat serial `-O3`, and imperfect nests execute `parallel()` only (no tiling/interchange across their statement tree yet).
 
-## Reference
+### Reference
 
 Merouani, Kara Bernou, Baghdadi. *Agentic Auto-Scheduling: An Experimental Study of LLM-Guided Loop Optimization.* PACT 2025. arXiv:2511.00592.
