@@ -28,8 +28,8 @@ const child = spawn(py, ["-P", "-m", "compilot.mcp_server", ...process.argv.slic
 child.on("error", (e) => {
   console.error(`compilot-mcp: failed to launch '${py}': ${e.message}`);
   console.error(
-    "Set COMPILOT_PYTHON to your cluster_compilot venv python, or run " +
-      "`pip install -e .` in a checkout so `compilot` is importable."
+    "Set COMPILOT_PYTHON to a Python that has compilot installed " +
+      "(`pip install compilot`, or `pip install -e .` in a checkout)."
   );
   process.exit(1);
 });

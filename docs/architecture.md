@@ -1,6 +1,28 @@
 # Architecture
 
-Four views of ComPilot. Each is shown as a rendered image (works everywhere) with its live mermaid source below.
+Four views of ComPilot, after a plain-language overview. Each is shown as a rendered image (works everywhere) with its live mermaid source below.
+
+## Overview (plain language)
+
+The picture at the top of the README: the AI proposes, the math checker proves, the run measures, and the feedback goes back to the AI.
+
+![overview](images/overview.png)
+
+<details><summary>mermaid source</summary>
+
+```mermaid
+flowchart LR
+    code["Code that crunches<br/>large tables of numbers"] --> ai
+    ai["<b>1. AI model</b><br/>proposes a faster way<br/>to run the loops"] --> check{"<b>2. Math checker</b><br/>provably the<br/>same result?"}
+    check -- "no: rejected,<br/>AI is told why" --> fb
+    check -- "yes" --> run["<b>3. Build, run, time it</b><br/>and compare the output"]
+    run --> fb["<b>4. Feedback</b><br/>verdict + measured speed-up"]
+    fb -- "try again" --> ai
+    run -- "keep the fastest" --> best["<b>Result</b><br/>fastest version,<br/>proven and measured"]
+    style best fill:#e6f4ea,stroke:#34a853
+```
+
+</details>
 
 ## System architecture
 

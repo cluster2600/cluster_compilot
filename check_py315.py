@@ -1,14 +1,14 @@
 """Python 3.15 readiness probe.
 
-cluster_compilot's code is already forward-compatible (requires-python >=3.14, no
-upper cap; deprecation-clean). The only thing standing between us and 3.15 is the
-`islpy` binary wheel — it has no `cp315` build yet, and a source build needs the
-ISL C library + a compiler. This script answers, in one command, "is it ready?":
+cluster_compilot runs on 3.15 (requires-python >=3.14, no upper cap; CI tests 3.14
+and 3.15), because islpy ships a `cp315` wheel since 2026.2.2. Free-threaded 3.15t
+still waits on a `cp315t` islpy wheel; a source build needs the ISL C library + a
+compiler. This script answers, in one command, "is it ready?":
 
   - does islpy publish a cp315 (and cp315t, for free-threading) wheel yet?
   - does the interpreter you're running satisfy our version guard?
 
-When the cp315 line flips to YES, `pip install -e .` on 3.15 should just work.
+When the cp315t line flips to YES, the free-threaded build can be tried.
 
     python3 check_py315.py
 """

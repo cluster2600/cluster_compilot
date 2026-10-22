@@ -113,7 +113,7 @@ GEOMEAN             2.72x      4.23x    1.55x
 
 mvt, atax, bicg and gesummv run the *same* schedule in both columns, so their ratios (0.59–1.98×) are the noise floor on a loaded host; the matmul family is where scheduling pays (gemm 4.3×, 2mm/3mm ~3× over naive parallelization).
 
-The tiling sweep that picked gemm's schedule (single run / median of 3 fresh runs, same host): untiled `reorder(i,k,j)`+`parallel(i)` 9.8× confirmed, `tile3d(32,128,64)` 12.8×, `tile3d(64,256,128)` 12.2×. The matvec kernels (atax/bicg/gesummv) are memory-bound at ~1×.
+The tiling sweep that picked gemm's schedule (single run / median of 3 fresh runs, same host): untiled `reorder(i,k,j)`+`parallel(i)` 9.8× confirmed, `tile3d(32,128,64)` 12.8×, `tile3d(64,256,128)` 12.2×. The matvec kernels (atax/bicg/gesummv) take 4–9 ms per run at LARGE, too short to time on a loaded host: gesummv's `parallel(i)` schedule measured 0.95× in `bench.py` and 8.60× in `baselines.py` in the same session.
 
 ## Agent loop (live behaviour, mock driver shown)
 
